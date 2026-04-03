@@ -1,6 +1,7 @@
 import os
 import json
 import datetime
+import time
 from dotenv import load_dotenv
 import ollama
 
@@ -33,6 +34,7 @@ def estimate_tokens(text):
 class CalendarAgent:
     def __init__(self):
         self.model = MODEL
+        self.last_activity_time = time.time()
         self.reset()
         
     def reset(self):
@@ -40,18 +42,44 @@ class CalendarAgent:
         self.messages = [
             {"role": "system", "content": prompt, "tokens": estimate_tokens(prompt)}
         ]
+        self.last_activity_time = time.time()
         
     def get_history(self):
         return self.messages
         
-    def chat_step(self, user_input=None):
+    def get_session_info(self):
+        now = time.time()
+        idle_time = now - self.last_activity_time
+        msg_count = len([m for m in self.messages if m['role'] != 'system'])
+        return {
+            "model": self.model,
+            "message_count": msg_count,
+            "idle_seconds": int(idle_time)
+        }
+        
+    def check_auto_reset(self):
+        """Reset conversation if inactive for > 10 minutes."""
+        now = time.time()
+        if now - self.last_activity_time > 600:
+            self.reset()
+            return True
+        return False
+        
+    async def chat_step(self, user_input=None, sender_name=None):
         """
-        Takes user input, appends to history, and processes one turn of Ollama.
-        Yields status updates and intermediate results to the caller (useful for UI).
+        Takes user input, appends to history, and processes one turn of Ollama (async).
+        Yields status updates and intermediate results.
         """
+        self.check_auto_reset()
+        self.last_activity_time = time.time()
+        
+        # Async Ollama client
+        client = ollama.AsyncClient()
+        
         if user_input:
-            tokens = estimate_tokens(user_input)
-            self.messages.append({"role": "user", "content": user_input, "tokens": tokens})
+            msg_content = f"[Sender: {sender_name}] {user_input}" if sender_name else user_input
+            tokens = estimate_tokens(msg_content)
+            self.messages.append({"role": "user", "content": msg_content, "tokens": tokens})
             yield {"type": "status", "content": "Assistant is thinking...", "tokens": estimate_tokens("Assistant is thinking...")}
             
         try:
@@ -59,21 +87,44 @@ class CalendarAgent:
             turn_count = 0
             
             while turn_count < MAX_TURNS:
-                response = ollama.chat(
+                response = await client.chat(
                     model=self.model,
                     messages=self.messages,
-                    tools=OLLAMA_TOOLS
+                    tools=OLLAMA_TOOLS,
+                    stream=True
                 )
                 
-                msg = response.get('message', {})
-                if not isinstance(msg, dict) and hasattr(msg, 'model_dump'):
-                    msg = msg.model_dump()
+                # Streaming assembly
+                full_message = ""
+                tool_calls = None
                 
+                async for chunk in response:
+                    msg_chunk = chunk.get('message', {})
+                    if hasattr(msg_chunk, 'model_dump'):
+                        msg_chunk = msg_chunk.model_dump()
+                        
+                    content_chunk = msg_chunk.get('content', '')
+                    if content_chunk:
+                        full_message += content_chunk
+                        yield {"type": "stream_chunk", "content": content_chunk}
+                        
+                    if msg_chunk.get('tool_calls'):
+                        if tool_calls is None:
+                            tool_calls = msg_chunk['tool_calls']
+                        else:
+                            # Not merging chunked tools right now if Ollama passes them sequentially, usually they come in one chunk from Ollama python client.
+                            pass
+                
+                msg = {"role": "assistant", "content": full_message}
+                if tool_calls:
+                    msg["tool_calls"] = tool_calls
+                    
                 msg['tokens'] = estimate_tokens(msg.get('content', ''))
                 if msg.get('tool_calls'):
                     msg['tokens'] += estimate_tokens(str(msg['tool_calls']))
                     
                 self.messages.append(msg)
+                self.last_activity_time = time.time()
                 
                 # Check for tool invocations
                 if msg.get('tool_calls'):
@@ -117,7 +168,9 @@ class CalendarAgent:
         except Exception as e:
             yield {"type": "error", "content": str(e)}
 
-def cli_chat_loop():
+import asyncio
+
+async def cli_chat_loop():
     print(f"Starting Calendar LLM Harness (Model: {MODEL})")
     print("Type 'quit' or 'exit' to stop.\n")
     
@@ -133,7 +186,7 @@ def cli_chat_loop():
                 print("Goodbye!")
                 break
                 
-            for event in agent.chat_step(user_input):
+            async for event in agent.chat_step(user_input, sender_name="CLIUser"):
                 if event['type'] == 'status':
                     print(event['content'])
                 elif event['type'] == 'tool_call':
@@ -142,6 +195,8 @@ def cli_chat_loop():
                     print(f"<- Tool Result: {event['result']}")
                 elif event['type'] == 'message':
                     print(f"\nAssistant> {event['content']}\n")
+                elif event['type'] == 'stream_chunk':
+                    print(event['content'], end='', flush=True)
                 elif event['type'] == 'error':
                     print(f"\n[ERROR] {event['content']}\n")
                     
@@ -150,4 +205,4 @@ def cli_chat_loop():
             break
 
 if __name__ == "__main__":
-    cli_chat_loop()
+    asyncio.run(cli_chat_loop())

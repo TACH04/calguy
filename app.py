@@ -3,6 +3,7 @@ from flask_cors import CORS
 from agent import CalendarAgent
 import json
 import logging
+import asyncio
 
 app = Flask(__name__)
 CORS(app)
@@ -25,8 +26,19 @@ def chat():
         return jsonify({"error": "No message provided"}), 400
         
     def generate():
-        for event in agent.chat_step(user_input):
-            yield f"data: {json.dumps(event)}\n\n"
+        # Create a new event loop to run the async generator synchronously for Flask
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        gen = agent.chat_step(user_input)
+        try:
+            while True:
+                try:
+                    event = loop.run_until_complete(gen.__anext__())
+                    yield f"data: {json.dumps(event)}\n\n"
+                except StopAsyncIteration:
+                    break
+        finally:
+            loop.close()
             
     return Response(generate(), mimetype="text/event-stream")
 
