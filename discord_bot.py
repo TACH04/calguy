@@ -69,16 +69,34 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Process commands first
+    # Process commands first (like !help, !clear, !session)
     if message.content.startswith('!'):
         await bot.process_commands(message)
         return
 
-    # If the message is in a DM or if the bot is mentioned
-    # We can also just process all messages if it's the only bot in the channel.
-    # Let's respond to all messages in the scope if we don't start with !
-    # This might be noisy, but for a dedicated channel it's fine.
+    # Check if the bot is mentioned or if it's a DM
+    is_dm = isinstance(message.channel, discord.DMChannel)
+    is_mentioned = bot.user in message.mentions
     
+    # If not mentioned and not a DM, ignore the message
+    if not (is_dm or is_mentioned):
+        return
+    
+    # Strip the mention from the message content to avoid confusing the agent
+    content = message.content
+    if is_mentioned:
+        # discord.py's message.content includes the mention. 
+        # We replace the bot's mention (both <@ID> and <@!ID> formats) with empty string
+        mention_str = bot.user.mention
+        content = content.replace(mention_str, '').strip()
+        # Also handle the variant mention with '!' which sometimes appears
+        content = content.replace(mention_str.replace('<@', '<@!'), '').strip()
+
+    # If the message is empty after stripping the mention, don't respond
+    if not content and is_mentioned:
+        await message.reply("Yes? How can I help you with your calendar today? (Type `!help` for commands)")
+        return
+
     sender_name = message.author.display_name
     
     response_msg = await message.reply("*(Thinking...)*")
@@ -86,7 +104,7 @@ async def on_message(message):
     last_edit_time = asyncio.get_event_loop().time()
     
     try:
-        async for event in agent.chat_step(message.content, sender_name=sender_name):
+        async for event in agent.chat_step(content, sender_name=sender_name):
             if event['type'] == 'status':
                 # Optional: edit to show status
                 if not current_content:
@@ -113,6 +131,9 @@ async def on_message(message):
         # Final update to ensure we didn't miss the last chunks
         if current_content:
             await response_msg.edit(content=current_content)
+        elif not current_content:
+             # Fallback if no content was generated
+             await response_msg.edit(content="I'm sorry, I couldn't generate a response.")
             
     except Exception as e:
         await message.reply(f"❌ An error occurred: {e}")
