@@ -200,7 +200,7 @@ document.addEventListener('DOMContentLoaded', () => {
         card.title = `${title}: ~${tokens} tokens`;
         
         contextList.appendChild(card);
-        contextList.scrollTop = contextList.scrollHeight;
+        contextList.scrollTop = 0;
     }
 
     function showToast(message, type) {
