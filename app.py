@@ -52,5 +52,6 @@ def reset():
     return jsonify({"status": "success"})
 
 if __name__ == "__main__":
-    print("starting CalGuy Web UI on http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    PORT = 5001
+    print(f"starting CalGuy Web UI on http://localhost:{PORT}")
+    app.run(host='0.0.0.0', port=PORT, debug=False)

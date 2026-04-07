@@ -13,3 +13,4 @@ debug.txt
 .vscode/
 .idea/
 *.log
+modelfile_dump.txt

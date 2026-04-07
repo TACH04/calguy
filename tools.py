@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from google_calendar import list_upcoming_events, create_event, delete_event
+from google_calendar import list_upcoming_events, create_event, delete_event, verify_date
 from dotenv import load_dotenv
 
 logger = logging.getLogger('tools')
@@ -74,6 +74,23 @@ OLLAMA_TOOLS = [
                 "required": ["event_id"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "verify_date",
+            "description": "Verify the day of the week for a given date. ALWAYS use this before creating an event to confirm you haven't hallucinated the calendar mapping for a day of the week.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date_string": {
+                        "type": "string",
+                        "description": "The date string to verify, typically in YYYY-MM-DD or ISO 8601 format."
+                    }
+                },
+                "required": ["date_string"]
+            }
+        }
     }
 ]
 
@@ -96,6 +113,9 @@ def execute_tool(name, arguments):
         elif name == "delete_event":
             event_id = arguments.get("event_id")
             return delete_event(event_id)
+        elif name == "verify_date":
+            date_string = arguments.get("date_string")
+            return verify_date(date_string)
         else:
             return f"Error: Function {name} not found."
     except Exception as e:

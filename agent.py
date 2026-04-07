@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import datetime
 import time
@@ -25,7 +26,9 @@ Current Context:
 - Timezone: {SERVER_TIMEZONE}
 
 When scheduling events, always confirm the time and duration. If a year is not specified, assume the current year or the next occurrence of that date.
+IMPORTANT: When resolving relative dates (like "next Tuesday" or "tomorrow"), ALWAYS use the `verify_date` tool to confirm that the chosen date string actually alignments with the requested day of the week. This prevents scheduling on the wrong day.
 When responding after a tool call, be concise and let the user know what was done.
+IMPORTANT: You must ONLY use the provided JSON tool calling mechanism when invoking tools. DO NOT respond with XML tags or raw <function> formats. If invoking a tool, do not provide any conversational preamble. Just invoke the tool.
 """
 
 def estimate_tokens(text):
@@ -118,6 +121,38 @@ class CalendarAgent:
                         else:
                             # Not merging chunked tools right now if Ollama passes them sequentially, usually they come in one chunk from Ollama python client.
                             pass
+                
+                # SAFETY NET: Check for leaked XML tool calls in the raw output
+                if tool_calls is None and '<function=' in full_message:
+                    match = re.search(r'<function=(.*?)>(.*?)</function>', full_message, re.DOTALL)
+                    if match:
+                        func_name = match.group(1).strip()
+                        params_str = match.group(2)
+                        
+                        args = {}
+                        param_matches = re.finditer(r'<parameter=(.*?)>(.*?)</parameter>', params_str, re.DOTALL)
+                        for pm in param_matches:
+                            try:
+                                val = pm.group(2).strip()
+                                if val.isdigit():
+                                    val = int(val)
+                                elif val.lower() == 'true':
+                                    val = True
+                                elif val.lower() == 'false':
+                                    val = False
+                                args[pm.group(1).strip()] = val
+                            except Exception:
+                                args[pm.group(1).strip()] = pm.group(2).strip()
+                                
+                        tool_calls = [{
+                            "function": {
+                                "name": func_name,
+                                "arguments": args
+                            }
+                        }]
+                        # Clean the message so the assistant memory doesn't contain raw XML
+                        full_message = re.sub(r'<function=.*?>(.*?)</function>\n?(?:</tool_call>\n?)?', '', full_message, flags=re.DOTALL).strip()
+                        logger.info(f"Regex safety net dynamically captured tool call: {func_name}")
                 
                 msg = {"role": "assistant", "content": full_message}
                 if tool_calls:
