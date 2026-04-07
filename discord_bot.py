@@ -133,6 +133,7 @@ async def on_message(message):
     current_content = ""
     created_event_links = []
     last_edit_time = asyncio.get_event_loop().time()
+    tools_used = []
     
     try:
         async for event in agent.chat_step(content, sender_name=sender_name):
@@ -142,6 +143,7 @@ async def on_message(message):
                     await response_msg.edit(content=f"*({event['content']})*")
             elif event['type'] == 'tool_call':
                 logger.info(f"Agent requested tool call: {event['tool']} with args: {event['args']}")
+                tools_used.append(event['tool'])
                 if not current_content:
                     await response_msg.edit(content=f"*(Calling tool: {event['tool']}...)*")
             elif event['type'] == 'stream_chunk':
@@ -182,6 +184,26 @@ async def on_message(message):
                 current_content += f"\n\n[View Event on Google Calendar]({link})"
                 
         if current_content:
+            # Append tools used if any
+            if tools_used:
+                from collections import Counter
+                # Count tools while preserving order of first appearance
+                counts = Counter(tools_used)
+                unique_tools = []
+                for t in tools_used:
+                    if t not in unique_tools:
+                        unique_tools.append(t)
+                
+                tool_parts = []
+                for t in unique_tools:
+                    count = counts[t]
+                    if count > 1:
+                        tool_parts.append(f"`{t}` (x{count})")
+                    else:
+                        tool_parts.append(f"`{t}`")
+                
+                current_content += f"\n\n*Tools used: {', '.join(tool_parts)}*"
+
             await response_msg.edit(content=current_content)
         elif not current_content:
              # Fallback if no content was generated
