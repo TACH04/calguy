@@ -14,3 +14,4 @@ debug.txt
 .idea/
 *.log
 modelfile_dump.txt
+memory-plan.md

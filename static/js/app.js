@@ -5,8 +5,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const contextList = document.getElementById('context-list');
     const resetBtn = document.getElementById('reset-btn');
     const toastContainer = document.getElementById('toast-container');
+    const contextModal = document.getElementById('context-modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalBody = document.getElementById('modal-body');
+    const closeModalBtn = document.getElementById('close-modal');
+    const tokenCount = document.getElementById('token-count');
+    const stopBtn = document.getElementById('stop-btn');
     
     let isWaiting = false;
+    let abortController = null;
 
     // Load initial history
     fetchHistory();
@@ -24,12 +31,36 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isWaiting) sendMessage();
     });
 
+    stopBtn.addEventListener('click', () => {
+        if (isWaiting && abortController) {
+            abortController.abort();
+            showToast('Request Stopped', 'info');
+        }
+    });
+
     resetBtn.addEventListener('click', async () => {
         await fetch('/api/reset', { method: 'POST' });
         chatWindow.innerHTML = '<div class="message system-msg"><p>Memory cleared. How can I help you schedule your day?</p></div>';
         fetchHistory(); // sync new history (contains system prompt)
         showToast('Memory Reset', 'info');
     });
+
+    // Modal Close Logic
+    closeModalBtn.addEventListener('click', () => {
+        contextModal.classList.remove('active');
+    });
+
+    contextModal.addEventListener('click', (e) => {
+        if (e.target === contextModal) {
+            contextModal.classList.remove('active');
+        }
+    });
+
+    function showContextModal(title, content) {
+        modalTitle.textContent = title;
+        modalBody.textContent = content;
+        contextModal.classList.add('active');
+    }
 
     async function fetchHistory() {
         try {
@@ -42,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 let role = 'system';
                 let title = 'System';
                 let snippet = msg.content || '';
+                let fullContent = msg.content || '';
                 let tokens = msg.tokens || 50;
 
                 if (msg.role === 'user') {
@@ -54,28 +86,33 @@ document.addEventListener('DOMContentLoaded', () => {
                         // Just use the first tool call name for the title in the bar if multiple
                         const tc = msg.tool_calls[0];
                         title = `Tool Call: ${tc.function.name}`;
-                        snippet = JSON.stringify(tc.function.arguments);
+                        fullContent = JSON.stringify(tc.function.arguments, null, 2);
+                        snippet = fullContent;
                     }
                     if (msg.content) snippet = msg.content.substring(0, 50) + '...';
                 } else if (msg.role === 'tool') {
                     role = 'tool';
                     title = `Tool Result: ${msg.name}`;
+                    fullContent = msg.content;
                     snippet = 'Executed successfully.';
                 }
 
                 if (index < existingCards.length) {
                     // Update existing card
-                    updateContextItem(existingCards[index], title, snippet, role, tokens);
+                    updateContextItem(existingCards[index], title, snippet, role, tokens, fullContent);
                 } else {
                     // Append new card
-                    addContextItem(title, snippet, role, tokens);
+                    addContextItem(title, snippet, role, tokens, fullContent);
                 }
             });
+
+            // updateTotalTokenDisplay will be called by updateContextItem/addContextItem
 
             // Remove extra cards if history shrunk (e.g. after reset)
             while (contextList.children.length > history.length) {
                 contextList.lastChild.remove();
             }
+            updateTotalTokenDisplay();
         } catch (e) {
             console.error('Error fetching history:', e);
         }
@@ -88,18 +125,22 @@ document.addEventListener('DOMContentLoaded', () => {
         chatInput.value = '';
         appendMessage(text, 'user-msg');
         addContextItem('User', text, 'user', estimateTokens(text));
-        // Let the backend sync add context items for new messages to get accurate token counts
-        // contextList.innerHTML = ''; fetchHistory(); // we will fetch at the end
-
         
         isWaiting = true;
+        abortController = new AbortController();
+        
+        // Update UI
+        sendBtn.style.display = 'none';
+        stopBtn.style.display = 'flex';
+        
         const typingId = showTyping();
 
         try {
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: text })
+                body: JSON.stringify({ message: text }),
+                signal: abortController.signal
             });
 
             const reader = response.body.getReader();
@@ -121,18 +162,21 @@ document.addEventListener('DOMContentLoaded', () => {
                             
                             // Handle different event types from backend
                             if (data.type === 'status') {
-                                // Status is handled by typing indicator, skip context bar to avoid grey flickering
+                                if (data.content.toLowerCase().includes('compressing')) {
+                                    showToast('Memory Compressing...', 'info');
+                                }
+                                updateTyping(data.content);
                                 continue;
                             } else if (data.type === 'tool_call') {
-                                removeTyping(typingId);
+                                updateTyping(null); // Temporarily hide typing for tool call info
                                 
                                 appendStep(`Tool Call: ${data.tool}`, JSON.stringify(data.args, null, 2));
-                                addContextItem(`Tool Call: ${data.tool}`, JSON.stringify(data.args), 'tool', data.tokens || 50);
+                                addContextItem(`Tool Call: ${data.tool}`, JSON.stringify(data.args), 'assistant', data.tokens || 50, JSON.stringify(data.args, null, 2));
                                 
                                 showTyping(); // re-add typing while tool executes
                             } else if (data.type === 'tool_result') {
                                 appendStep(`Tool Result`, data.result);
-                                addContextItem(`Tool Result`, data.result.substring(0, 50) + '...', 'tool', data.tokens || 50);
+                                addContextItem(`Tool Result`, data.result.substring(0, 50) + '...', 'tool', data.tokens || 50, data.result);
                                 if (data.tool.includes('create') || data.tool.includes('delete')) {
                                     showToast(`Calendar Action Confirmed: ${data.tool}`, 'success');
                                 }
@@ -156,11 +200,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         } catch (e) {
-            console.error(e);
+            if (e.name === 'AbortError') {
+                console.log('Fetch aborted');
+                appendMessage('Request cancelled.', 'system-msg');
+            } else {
+                console.error(e);
+                appendMessage(`Connection error.`, 'system-msg');
+            }
             removeTyping();
-            appendMessage(`Connection error.`, 'system-msg');
         } finally {
             isWaiting = false;
+            abortController = null;
+            sendBtn.style.display = 'flex';
+            stopBtn.style.display = 'none';
             removeTyping();
         }
     }
@@ -173,19 +225,35 @@ document.addEventListener('DOMContentLoaded', () => {
             p.textContent = text;
             div.appendChild(p);
         }
-        chatWindow.appendChild(div);
+        const typingIndicator = document.getElementById('typing-indicator');
+        if (typingIndicator) {
+            chatWindow.insertBefore(div, typingIndicator);
+        } else {
+            chatWindow.appendChild(div);
+        }
         chatWindow.scrollTop = chatWindow.scrollHeight;
         return div;
     }
 
-    function showTyping() {
-        const div = document.createElement('div');
-        div.id = 'typing-indicator';
-        div.className = 'typing';
-        div.innerHTML = '<span></span><span></span><span></span>';
-        chatWindow.appendChild(div);
+    function showTyping(label = 'Thinking...') {
+        let div = document.getElementById('typing-indicator');
+        if (!div) {
+            div = document.createElement('div');
+            div.id = 'typing-indicator';
+            div.className = 'typing';
+            chatWindow.appendChild(div);
+        }
+        div.innerHTML = `<span></span><span></span><span></span> <small>${label}</small>`;
         chatWindow.scrollTop = chatWindow.scrollHeight;
         return div.id;
+    }
+
+    function updateTyping(label) {
+        if (!label) {
+            removeTyping();
+            return;
+        }
+        showTyping(label);
     }
 
     function removeTyping() {
@@ -208,21 +276,28 @@ document.addEventListener('DOMContentLoaded', () => {
         div.addEventListener('click', () => {
             div.classList.toggle('expanded');
         });
-        chatWindow.appendChild(div);
+
+        const typingIndicator = document.getElementById('typing-indicator');
+        if (typingIndicator) {
+            chatWindow.insertBefore(div, typingIndicator);
+        } else {
+            chatWindow.appendChild(div);
+        }
+
         chatWindow.scrollTop = chatWindow.scrollHeight;
         return div;
     }
 
-    function addContextItem(title, snippet, type, tokens = 100) {
+    function addContextItem(title, snippet, type, tokens = 100, fullContent = '') {
         const card = document.createElement('div');
-        updateContextItem(card, title, snippet, type, tokens);
+        updateContextItem(card, title, snippet, type, tokens, fullContent || snippet);
         contextList.appendChild(card);
         contextList.scrollTop = 0;
     }
 
-    function updateContextItem(card, title, snippet, type, tokens = 100) {
+    function updateContextItem(card, title, snippet, type, tokens = 100, fullContent = '') {
         const MAX_CONTEXT = 8192;
-        const heightPct = Math.max((tokens / MAX_CONTEXT) * 100, 0.5); 
+        const heightPct = (tokens / MAX_CONTEXT) * 100; // Strictly proportional
         
         // Only update if changed to avoid unnecessary reflows/flicker
         const newClass = `context-card ${type}`;
@@ -238,6 +313,23 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const newTitle = `${title}: ~${tokens} tokens`;
         if (card.title !== newTitle) card.title = newTitle;
+
+        // Store tokens for total calculation
+        card.dataset.tokens = tokens;
+
+        // Store full content for modal and add click listener
+        card.onclick = () => showContextModal(title, fullContent || snippet);
+        
+        updateTotalTokenDisplay();
+    }
+
+    function updateTotalTokenDisplay() {
+        const cards = contextList.querySelectorAll('.context-card');
+        let total = 0;
+        cards.forEach(card => {
+            total += parseInt(card.dataset.tokens || 0);
+        });
+        tokenCount.textContent = `${total} Tokens`;
     }
 
     function showToast(message, type) {

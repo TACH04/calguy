@@ -18,6 +18,7 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                 </button>
             </div>
+            <div id="token-count" class="token-counter">0 Tokens</div>
             <div class="context-list" id="context-list">
                 <!-- Context logs append here -->
             </div>
@@ -44,8 +45,11 @@
             <div class="input-area">
                 <div class="input-glass">
                     <input type="text" id="chat-input" placeholder="Ask to schedule a meeting, check events, etc..." autocomplete="off">
-                    <button id="send-btn" class="send-btn">
+                    <button id="send-btn" class="send-btn" title="Send (Enter)">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
+                    <button id="stop-btn" class="stop-btn" title="Stop Generation" style="display: none;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12"/></svg>
                     </button>
                 </div>
             </div>
@@ -53,6 +57,22 @@
     </div>
 
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- Context Details Modal -->
+    <div id="context-modal" class="modal-overlay">
+        <div class="modal-content glass-bg-strong">
+            <div class="modal-header">
+                <h3 id="modal-title">Context Detail</h3>
+                <button id="close-modal" class="btn-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Full context content goes here -->
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/app.js"></script>
 </body>
 </html>

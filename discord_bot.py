@@ -85,6 +85,8 @@ async def session_cmd(ctx):
     msg = (f"**Session Info:**\n"
            f"- Model: `{info['model']}`\n"
            f"- Message Count: `{info['message_count']}`\n"
+           f"- Estimated Tokens: `{info.get('estimated_tokens', '?')}` / 8000\n"
+           f"- Memory Compressions: `{info.get('compression_count', 0)}`\n"
            f"- Idle Time: `{idle_str}`\n"
            f"(Note: I auto-reset after 10 minutes of inactivity)")
     await ctx.send(msg)
@@ -138,7 +140,7 @@ async def on_message(message):
     try:
         async for event in agent.chat_step(content, sender_name=sender_name):
             if event['type'] == 'status':
-                # Optional: edit to show status
+                # Always show status until the actual streaming response starts
                 if not current_content:
                     await response_msg.edit(content=f"*({event['content']})*")
             elif event['type'] == 'tool_call':

@@ -1,6 +1,5 @@
 import os
 import re
-import json
 import datetime
 import time
 import logging
@@ -10,6 +9,7 @@ import ollama
 logger = logging.getLogger('agent')
 
 from tools import OLLAMA_TOOLS, execute_tool
+from memory_manager import MemoryManager, estimate_tokens
 
 load_dotenv()
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:30b")
@@ -31,38 +31,47 @@ When responding after a tool call, be concise and let the user know what was don
 IMPORTANT: You must ONLY use the provided JSON tool calling mechanism when invoking tools. DO NOT respond with XML tags or raw <function> formats. If invoking a tool, do not provide any conversational preamble. Just invoke the tool.
 """
 
-def estimate_tokens(text):
-    if not text:
-        return 0
-    return len(str(text)) // 4
 
 
 class CalendarAgent:
     def __init__(self):
         self.model = MODEL
         self.last_activity_time = time.time()
+        self.memory = MemoryManager(model=self.model)
         self.reset()
-        
+
     def reset(self):
         prompt = get_system_prompt()
-        self.messages = [
-            {"role": "system", "content": prompt, "tokens": estimate_tokens(prompt)}
-        ]
+        self.memory.reset({"role": "system", "content": prompt})
         self.last_activity_time = time.time()
-        
+
+    @property
+    def messages(self):
+        """Expose the underlying message list (for compatibility with callers)."""
+        return self.memory.messages
+
+    @property
+    def compression_count(self):
+        return self.memory.compression_count
+
     def get_history(self):
-        return self.messages
-        
+        return self.memory.messages
+
+    def get_total_tokens(self):
+        return self.memory.get_total_tokens()
+
     def get_session_info(self):
         now = time.time()
         idle_time = now - self.last_activity_time
-        msg_count = len([m for m in self.messages if m['role'] != 'system'])
+        msg_count = len([m for m in self.memory.messages if m['role'] != 'system'])
         return {
             "model": self.model,
             "message_count": msg_count,
-            "idle_seconds": int(idle_time)
+            "idle_seconds": int(idle_time),
+            "estimated_tokens": self.get_total_tokens(),
+            "compression_count": self.compression_count,
         }
-        
+
     def check_auto_reset(self):
         """Reset conversation if inactive for > 10 minutes."""
         now = time.time()
@@ -71,7 +80,8 @@ class CalendarAgent:
             self.reset()
             return True
         return False
-        
+
+
     async def chat_step(self, user_input=None, sender_name=None):
         """
         Takes user input, appends to history, and processes one turn of Ollama (async).
@@ -79,18 +89,25 @@ class CalendarAgent:
         """
         self.check_auto_reset()
         self.last_activity_time = time.time()
-        
+
         # Async Ollama client
         client = ollama.AsyncClient()
-        
+
         if user_input:
             msg_content = f"[Sender: {sender_name}] {user_input}" if sender_name else user_input
-            tokens = estimate_tokens(msg_content)
-            self.messages.append({"role": "user", "content": msg_content, "tokens": tokens})
-            yield {"type": "status", "content": "Assistant is thinking...", "tokens": estimate_tokens("Assistant is thinking...")}
+            self.memory.append({"role": "user", "content": msg_content})
+
+            # Check if we need to compress history before continuing
+            if self.memory.needs_compression():
+                total_tokens = self.get_total_tokens()
+                logger.info(f"Token count ({total_tokens}) exceeds threshold. Compressing memory...")
+                yield {"type": "status", "content": "Compressing conversation memory...", "tokens": 0}
+                await self.memory.compress_history()
+
+            yield {"type": "status", "content": "Assistant is thinking...", "tokens": 0}
             
         try:
-            MAX_TURNS = 10
+            MAX_TURNS = 1000
             turn_count = 0
             
             while turn_count < MAX_TURNS:
@@ -157,42 +174,37 @@ class CalendarAgent:
                 msg = {"role": "assistant", "content": full_message}
                 if tool_calls:
                     msg["tool_calls"] = tool_calls
-                    
-                msg['tokens'] = estimate_tokens(msg.get('content', ''))
-                if msg.get('tool_calls'):
-                    msg['tokens'] += estimate_tokens(str(msg['tool_calls']))
-                    
-                self.messages.append(msg)
+
+                self.memory.append(msg)
                 self.last_activity_time = time.time()
-                
+
                 # Check for tool invocations
                 if msg.get('tool_calls'):
                     for tool_call in msg['tool_calls']:
                         tool_name = tool_call['function']['name']
                         tool_args = tool_call['function']['arguments']
-                        
+
                         yield {
                             "type": "tool_call",
                             "tool": tool_name,
                             "args": tool_args,
                             "tokens": estimate_tokens(tool_name) + estimate_tokens(str(tool_args))
                         }
-                        
+
                         tool_result = execute_tool(tool_name, tool_args)
-                        result_tokens = estimate_tokens(tool_result)
-                        
-                        self.messages.append({
+
+                        # append via memory (handles pruning automatically)
+                        self.memory.append({
                             "role": "tool",
                             "name": tool_name,
                             "content": str(tool_result),
-                            "tokens": result_tokens
                         })
-                        
+
                         yield {
                             "type": "tool_result",
                             "tool": tool_name,
                             "result": tool_result,
-                            "tokens": result_tokens
+                            "tokens": estimate_tokens(str(tool_result))
                         }
                         
                     yield {"type": "status", "content": "Assistant is processing tool results...", "tokens": estimate_tokens("Assistant is processing tool results...")}
