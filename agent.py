@@ -103,6 +103,7 @@ class CalendarAgent:
                 logger.info(f"Token count ({total_tokens}) exceeds threshold. Compressing memory...")
                 yield {"type": "status", "content": "Compressing conversation memory...", "tokens": 0}
                 await self.memory.compress_history()
+                yield {"type": "compressed"}
 
             yield {"type": "status", "content": "Assistant is thinking...", "tokens": 0}
             
@@ -208,6 +209,15 @@ class CalendarAgent:
                         }
                         
                     yield {"type": "status", "content": "Assistant is processing tool results...", "tokens": estimate_tokens("Assistant is processing tool results...")}
+                    
+                    # Check if we need to compress history mid-loop after tool results
+                    if self.memory.needs_compression():
+                        total_tokens = self.get_total_tokens()
+                        logger.info(f"Token count ({total_tokens}) exceeds threshold mid-loop. Compressing memory...")
+                        yield {"type": "status", "content": "Compressing conversation memory...", "tokens": 0}
+                        await self.memory.compress_history()
+                        yield {"type": "compressed"}
+
                     turn_count += 1
                 else:
                     yield {"type": "message", "content": msg.get('content'), "tokens": msg['tokens']}

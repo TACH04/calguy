@@ -167,6 +167,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                 }
                                 updateTyping(data.content);
                                 continue;
+                            } else if (data.type === 'compressed') {
+                                await fetchHistory();
+                                continue;
                             } else if (data.type === 'tool_call') {
                                 updateTyping(null); // Temporarily hide typing for tool call info
                                 
@@ -314,22 +317,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const newTitle = `${title}: ~${tokens} tokens`;
         if (card.title !== newTitle) card.title = newTitle;
 
-        // Store tokens for total calculation
+        // Store tokens for total calculation and update display
+        const oldTokens = parseInt(card.dataset.tokens || 0);
         card.dataset.tokens = tokens;
-
+        
         // Store full content for modal and add click listener
         card.onclick = () => showContextModal(title, fullContent || snippet);
         
-        updateTotalTokenDisplay();
+        updateTotalTokenDisplay(tokens - oldTokens);
     }
 
-    function updateTotalTokenDisplay() {
-        const cards = contextList.querySelectorAll('.context-card');
-        let total = 0;
-        cards.forEach(card => {
-            total += parseInt(card.dataset.tokens || 0);
-        });
-        tokenCount.textContent = `${total} Tokens`;
+    let cachedTotalTokens = 0;
+
+    function updateTotalTokenDisplay(diff = 0) {
+        if (diff === 0) {
+            // Full recount
+            const cards = contextList.querySelectorAll('.context-card');
+            cachedTotalTokens = 0;
+            cards.forEach(card => {
+                cachedTotalTokens += parseInt(card.dataset.tokens || 0);
+            });
+        } else {
+            cachedTotalTokens += diff;
+        }
+        tokenCount.textContent = `${cachedTotalTokens} Tokens`;
     }
 
     function showToast(message, type) {
