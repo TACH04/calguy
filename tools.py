@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from google_calendar import list_upcoming_events, create_event, delete_event, verify_date
+from web_search import search_web
 from dotenv import load_dotenv
 
 logger = logging.getLogger('tools')
@@ -91,6 +92,27 @@ OLLAMA_TOOLS = [
                 "required": ["date_string"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the web for up-to-date information, news, or answers to questions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query to look up."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "The maximum number of results to return. Default is 5."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
     }
 ]
 
@@ -116,6 +138,10 @@ def execute_tool(name, arguments):
         elif name == "verify_date":
             date_string = arguments.get("date_string")
             return verify_date(date_string)
+        elif name == "search_web":
+            query = arguments.get("query")
+            max_results = arguments.get("max_results", 5)
+            return search_web(query, max_results)
         else:
             return f"Error: Function {name} not found."
     except Exception as e:
