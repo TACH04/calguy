@@ -27,7 +27,9 @@ Current Context:
 
 When scheduling events, always confirm the time and duration. If a year is not specified, assume the current year or the next occurrence of that date.
 IMPORTANT: When resolving relative dates (like "next Tuesday" or "tomorrow"), ALWAYS use the `verify_date` tool to confirm that the chosen date string actually alignments with the requested day of the week. This prevents scheduling on the wrong day.
-If the user asks a question you don't know the answer to, or asks for recent news/information, use the `search_web` tool.
+If the user asks a simple question you don't know the answer to, use the `search_web` tool.
+For complex questions, synthesis tasks, or when asked to "research" something deeply, use the `thorough_research` tool.
+If you need to read a specific URL in its entirety, use the `scrape_url` tool.
 When responding after a tool call, be concise and let the user know what was done.
 IMPORTANT: You must ONLY use the provided JSON tool calling mechanism when invoking tools. DO NOT respond with XML tags or raw <function> formats. If invoking a tool, do not provide any conversational preamble. Just invoke the tool.
 """
@@ -185,7 +187,32 @@ class CalendarAgent:
                             "tokens": estimate_tokens(tool_name) + estimate_tokens(str(tool_args))
                         }
 
-                        tool_result = execute_tool(tool_name, tool_args)
+                        import inspect
+                        
+                        raw_result = execute_tool(tool_name, tool_args)
+                        if inspect.isawaitable(raw_result):
+                            tool_result = await raw_result
+                        else:
+                            tool_result = raw_result
+
+                        if isinstance(tool_result, dict) and tool_result.get("SPAWN_SUBAGENT"):
+                            query = tool_result.get("query")
+                            yield {"type": "status", "content": "Initializing Research Sub-Agent...", "tokens": 0}
+                            brief = await self.memory.generate_brief()
+                            
+                            from research_agent import ResearchAgent
+                            subagent = ResearchAgent(model=self.model)
+                            report = ""
+                            
+                            yield {"type": "subagent_start", "content": "Deep research initiated"}
+                            
+                            async for sub_event in subagent.research_loop(query, brief):
+                                # Forward events to the UI
+                                yield sub_event
+                                if sub_event.get("type") == "subagent_final_report":
+                                    report = sub_event.get("content", "")
+                                    
+                            tool_result = report
 
                         # append via memory (handles pruning automatically)
                         self.memory.append({

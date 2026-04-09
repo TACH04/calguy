@@ -12,6 +12,34 @@ document.addEventListener('DOMContentLoaded', () => {
     const tokenCount = document.getElementById('token-count');
     const stopBtn = document.getElementById('stop-btn');
     
+    // Tab Elements
+    const tabMain = document.getElementById('tab-main');
+    const tabSub = document.getElementById('tab-sub');
+    const paneMain = document.getElementById('pane-main');
+    const paneSub = document.getElementById('pane-sub');
+    const subBadge = document.getElementById('sub-badge');
+    const subChatWindow = document.getElementById('sub-chat-window');
+    const subContextList = document.getElementById('sub-context-list');
+    const subTokenCount = document.getElementById('sub-token-count');
+    
+    // Tab Switching Logic
+    function switchTab(tabId) {
+        if (tabId === 'main') {
+            tabMain.classList.add('active');
+            tabSub.classList.remove('active');
+            paneMain.classList.add('active');
+            paneSub.classList.remove('active');
+        } else {
+            tabMain.classList.remove('active');
+            tabSub.classList.add('active');
+            paneMain.classList.remove('active');
+            paneSub.classList.add('active');
+        }
+    }
+
+    tabMain.addEventListener('click', () => switchTab('main'));
+    tabSub.addEventListener('click', () => switchTab('sub'));
+
     let isWaiting = false;
     let abortController = null;
 
@@ -177,6 +205,28 @@ document.addEventListener('DOMContentLoaded', () => {
                                 addContextItem(`Tool Call: ${data.tool}`, JSON.stringify(data.args), 'assistant', data.tokens || 50, JSON.stringify(data.args, null, 2));
                                 
                                 showTyping(); // re-add typing while tool executes
+                            } else if (data.type === 'subagent_start') {
+                                subChatWindow.innerHTML = '<div class="message system-msg"><p>I am the Research Sub-Agent. Starting Deep Research...</p></div>';
+                                subContextList.innerHTML = '';
+                                subTokenCount.textContent = '0 Tokens';
+                                subBadge.classList.remove('hidden');
+                                switchTab('sub');
+                                updateSubTyping(data.content);
+                            } else if (data.type === 'subagent_thought') {
+                                updateSubTyping(data.content);
+                            } else if (data.type === 'subagent_tool_call') {
+                                updateSubTyping(null);
+                                appendSubStep(`Sub-Agent 🔎: ${data.tool}`, JSON.stringify(data.args, null, 2));
+                                addSubContextItem(`Tool Call: ${data.tool}`, JSON.stringify(data.args), 'assistant', data.tokens || 50, JSON.stringify(data.args, null, 2));
+                                updateSubTyping("Executing tool...");
+                            } else if (data.type === 'subagent_tool_result') {
+                                updateSubTyping(null);
+                                appendSubStep(`Sub-Agent Result`, data.result);
+                                addSubContextItem(`Tool Result`, data.result.substring(0, 50) + '...', 'tool', data.tokens || 50, data.result);
+                            } else if (data.type === 'subagent_final_report') {
+                                removeSubTyping();
+                                subBadge.classList.add('hidden');
+                                switchTab('main');
                             } else if (data.type === 'tool_result') {
                                 appendStep(`Tool Result`, data.result);
                                 addContextItem(`Tool Result`, data.result.substring(0, 50) + '...', 'tool', data.tokens || 50, data.result);
@@ -356,5 +406,100 @@ document.addEventListener('DOMContentLoaded', () => {
             toast.style.opacity = '0';
             setTimeout(() => toast.remove(), 300);
         }, 3000);
+    }
+
+    // --- SUB-AGENT DOM HELPERS ---
+
+    function showSubTyping(label = 'Thinking...') {
+        let div = document.getElementById('sub-typing-indicator');
+        if (!div) {
+            div = document.createElement('div');
+            div.id = 'sub-typing-indicator';
+            div.className = 'typing';
+            subChatWindow.appendChild(div);
+        }
+        div.innerHTML = `<span></span><span></span><span></span> <small>${label}</small>`;
+        subChatWindow.scrollTop = subChatWindow.scrollHeight;
+        return div.id;
+    }
+
+    function updateSubTyping(label) {
+        if (!label) {
+            removeSubTyping();
+            return;
+        }
+        showSubTyping(label);
+    }
+
+    function removeSubTyping() {
+        const typing = document.getElementById('sub-typing-indicator');
+        if (typing) typing.remove();
+    }
+
+    function appendSubStep(title, details) {
+        const div = document.createElement('div');
+        div.className = 'llm-step';
+        div.innerHTML = `
+            <div class="llm-step-header">
+                <div class="llm-step-icon">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 2 13 9 20 9"></polyline><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path></svg>
+                </div>
+                <span>${title}</span>
+            </div>
+            <div class="llm-step-details">${details.replace(/</g, "&lt;")}</div>
+        `;
+        div.addEventListener('click', () => {
+            div.classList.toggle('expanded');
+        });
+
+        const typingIndicator = document.getElementById('sub-typing-indicator');
+        if (typingIndicator) {
+            subChatWindow.insertBefore(div, typingIndicator);
+        } else {
+            subChatWindow.appendChild(div);
+        }
+
+        subChatWindow.scrollTop = subChatWindow.scrollHeight;
+        return div;
+    }
+
+    function addSubContextItem(title, snippet, type, tokens = 100, fullContent = '') {
+        const card = document.createElement('div');
+        updateSubContextItem(card, title, snippet, type, tokens, fullContent || snippet);
+        subContextList.appendChild(card);
+        subContextList.scrollTop = 0;
+    }
+
+    function updateSubContextItem(card, title, snippet, type, tokens = 100, fullContent = '') {
+        const MAX_CONTEXT = 8192;
+        const heightPct = (tokens / MAX_CONTEXT) * 100;
+        
+        const newClass = `context-card ${type}`;
+        if (card.className !== newClass) card.className = newClass;
+        
+        const newHeight = `${heightPct}%`;
+        if (card.style.getPropertyValue('--token-height') !== newHeight) {
+            card.style.setProperty('--token-height', newHeight);
+        }
+        
+        const newContent = `<strong>${title}</strong>${snippet.replace(/</g, "&lt;")}`;
+        if (card.innerHTML !== newContent) card.innerHTML = newContent;
+        
+        const newTitle = `${title}: ~${tokens} tokens`;
+        if (card.title !== newTitle) card.title = newTitle;
+
+        card.dataset.tokens = tokens;
+        card.onclick = () => showContextModal(title, fullContent || snippet);
+        
+        updateSubTotalTokenDisplay();
+    }
+
+    function updateSubTotalTokenDisplay() {
+        const cards = subContextList.querySelectorAll('.context-card');
+        let total = 0;
+        cards.forEach(card => {
+            total += parseInt(card.dataset.tokens || 0);
+        });
+        subTokenCount.textContent = `${total} Tokens`;
     }
 });

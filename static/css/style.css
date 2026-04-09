@@ -52,10 +52,92 @@ body {
     position: relative;
     z-index: 1;
     display: flex;
+    flex-direction: column;
     width: 100%;
     height: 100%;
-    padding: 24px; /* Increased padding slightly */
+    padding: 24px;
+    gap: 15px;
+}
+
+/* Tabs Header */
+.tabs-header {
+    display: flex;
+    gap: 10px;
+    padding-bottom: 5px;
+}
+
+.tab-btn {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    padding: 10px 20px;
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    outline: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tab-btn:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn.active {
+    background: rgba(30, 41, 59, 0.9);
+    color: var(--accent);
+    border-bottom: 2px solid var(--accent);
+}
+
+.badge {
+    background: var(--tool-color);
+    color: white;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 10px;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 0.7; transform: scale(0.95); }
+    50% { opacity: 1; transform: scale(1.05); }
+    100% { opacity: 0.7; transform: scale(0.95); }
+}
+
+.panes-container {
+    display: flex;
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+}
+
+.tab-pane {
+    display: none;
+    width: 100%;
+    height: 100%;
     gap: 20px;
+}
+
+.tab-pane.active {
+    display: flex;
+}
+
+/* Sub-agent UI differentiation */
+.subagent-header {
+    background: rgba(14, 165, 233, 0.05);
+}
+
+.sub-avatar {
+    background: linear-gradient(135deg, var(--tool-color), var(--success-color));
+}
+
+.sub-status {
+    color: var(--tool-color);
 }
 
 /* Sidebar context inspector */

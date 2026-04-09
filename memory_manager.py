@@ -88,12 +88,16 @@ class MemoryManager:
         from consuming thousands of tokens.
         """
         content = message.get("content", "")
-        if len(content) > self.tool_result_char_limit:
-            preview = content[: self.tool_result_char_limit]
-            tool_name = message.get("name", "unknown")
+        tool_name = message.get("name", "unknown")
+        
+        # dynamic limits based on tool
+        char_limit = 6000 if tool_name in ["research_agent", "scrape_url"] else self.tool_result_char_limit
+        
+        if len(content) > char_limit:
+            preview = content[: char_limit]
             pruned_note = (
                 f"[Tool result from '{tool_name}' was truncated — "
-                f"{len(content)} chars → {self.tool_result_char_limit} shown]\n\n"
+                f"{len(content)} chars → {char_limit} shown]\n\n"
                 f"{preview}\n...[truncated]"
             )
             logger.info(
@@ -103,6 +107,51 @@ class MemoryManager:
             message = dict(message)  # don't mutate the original
             message["content"] = pruned_note
         return message
+
+    async def generate_brief(self) -> str:
+        """
+        Extracts a very brief summary of the user's implicit constraints, goals, 
+        and key entities from the current active memory. Useful to pass to sub-agents.
+        """
+        non_system = [m for m in self.messages if m["role"] != "system" or m.get("is_memory")]
+        if not non_system:
+            return "No prior context."
+            
+        transcript_parts = []
+        for m in non_system[-10:]: # just look at the recent tail
+            role = m["role"].upper()
+            content = m.get("content", "")
+            if len(content) > 1000:
+                content = content[:1000] + "..."
+            transcript_parts.append(f"{role}: {content}")
+            
+        transcript = "\n".join(transcript_parts)
+        
+        brief_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a context extractor. Look at the recent conversation transcript. "
+                    "Extract ONLY the user's active goals, constraints (like dates, timezone, preferences), "
+                    "and any key entities being discussed. output as a short 2-3 sentence context brief. no pleasantries."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Transcript:\n{transcript}"
+            }
+        ]
+        
+        try:
+            client = ollama.AsyncClient()
+            response = await client.chat(model=self.model, messages=brief_messages, stream=False)
+            if hasattr(response, "model_dump"):
+                response = response.model_dump()
+            brief = response.get("message", {}).get("content", "").strip()
+            return brief if brief else "No immediate context extracted."
+        except Exception as e:
+            logger.error(f"Failed to generate brief: {e}")
+            return "Failed to generate context brief."
 
     # ------------------------------------------------------------------
     # Recursive Summarization

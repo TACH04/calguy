@@ -1,7 +1,8 @@
 import os
 import logging
 from google_calendar import list_upcoming_events, create_event, delete_event, verify_date
-from web_search import search_web
+from web_search import search_web, scrape_url
+from research_agent import ResearchAgent
 from dotenv import load_dotenv
 from tool_registry import ToolRegistry
 
@@ -115,6 +116,43 @@ def verify_date_tool(date_string):
 )
 def search_web_tool(query, max_results=5):
     return search_web(query, max_results)
+
+@registry.register(
+    name="research_agent",
+    description="Spawn a sub-agent to perform deep, multi-step research on a complex topic. Resolves complex questions or deep-dives into a topic.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The complex query or topic to research."
+            }
+        },
+        "required": ["query"]
+    }
+)
+def research_agent_tool(query):
+    # This must return the generator. We construct the agent and start the loop.
+    # Note: we need the context brief, which agent.py will have to inject, but for now we'll let agent.py handle the `research_agent_tool` invocation directly since it's a special generator, or we pass a placeholder. Actually, let's keep it simple: the tool registry just flags it, but agent.py handles it specially.
+    # Or, we can let tools return a special "spawn_subagent" struct. Let's just return a dict that agent.py catches.
+    return {"SPAWN_SUBAGENT": True, "query": query}
+
+@registry.register(
+    name="scrape_url",
+    description="Scrape the full readable content of a specific URL. Use this when you have a specific link you want to read in depth.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "The full URL to scrape."
+            }
+        },
+        "required": ["url"]
+    }
+)
+def scrape_url_tool(url):
+    return scrape_url(url)
 
 # --- Compatibility Layer ---
 
