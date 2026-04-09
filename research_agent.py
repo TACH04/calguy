@@ -54,16 +54,17 @@ SUB_AGENT_TOOLS = [
 ]
 
 class ResearchAgent:
-    def __init__(self, model=MODEL):
+    def __init__(self, model=MODEL, debug_callback=None):
         self.model = model
         self.messages = []
+        self.debug_callback = debug_callback
 
     async def execute_sub_tool(self, name, args):
         if name == "search_web":
             return search_web(args.get("query"), args.get("max_results", 5))
         elif name == "scrape_url":
             # scrape_url is async now, so we await it
-            return await scrape_url(args.get("url"), args.get("query"))
+            return await scrape_url(args.get("url"), args.get("query"), debug_callback=self.debug_callback)
         else:
             return f"Error: {name} is not a valid tool."
 
@@ -98,15 +99,34 @@ Target Research Query:
                     model=self.model,
                     messages=self.messages,
                     tools=SUB_AGENT_TOOLS,
-                    stream=False
+                    stream=True
                 )
                 
-                if hasattr(response, "model_dump"):
-                    response = response.model_dump()
+                full_message = ""
+                tool_calls = None
+                
+                async for chunk in response:
+                    if hasattr(chunk, 'model_dump'):
+                        chunk = chunk.model_dump()
+                        
+                    msg_chunk = chunk.get('message', {})
+                    content_chunk = msg_chunk.get("content", "")
                     
-                msg = response.get("message", {})
-                tool_calls = msg.get("tool_calls", [])
-                content = msg.get("content", "").strip()
+                    if content_chunk:
+                        full_message += content_chunk
+                        if self.debug_callback:
+                            self.debug_callback({"type": "debug_stream", "category": "subagent", "content": content_chunk})
+                        yield {"type": "subagent_stream_chunk", "content": content_chunk}
+                        
+                    if msg_chunk.get('tool_calls'):
+                        if tool_calls is None:
+                            tool_calls = msg_chunk['tool_calls']
+                        else:
+                            pass
+                            
+                msg = {"role": "assistant", "content": full_message}
+                if tool_calls:
+                    msg["tool_calls"] = tool_calls
 
                 self.messages.append(msg)
                 
@@ -121,7 +141,8 @@ Target Research Query:
                             "args": func_args
                         }
                         
-                        yield {"type": "subagent_thought", "content": f"Sub-agent is executing {func_name}..."}
+                        if self.debug_callback:
+                            self.debug_callback({"type": "debug_event", "category": "subagent", "content": f"Sub-agent called tool: {func_name}"})
                         
                         # execute
                         result = await self.execute_sub_tool(func_name, func_args)
@@ -139,15 +160,15 @@ Target Research Query:
                             "content": str(result)
                         })
                         
-                        yield {"type": "subagent_thought", "content": f"Sub-agent processed {func_name} results."}
                     turn_count += 1
                 else:
                     # Final answer reached
-                    if content:
-                        yield {"type": "subagent_final_report", "content": content}
+                    if full_message:
+                        yield {"type": "subagent_final_report", "content": full_message}
                         break
                     else:
-                        yield {"type": "subagent_thought", "content": "Reached empty response. Trying again."}
+                        if self.debug_callback:
+                            self.debug_callback({"type": "debug_event", "category": "subagent", "content": "Reached empty response. Trying again."})
                         turn_count += 1
                         
             if turn_count >= MAX_TURNS:

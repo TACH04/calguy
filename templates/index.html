@@ -11,10 +11,6 @@
     <div class="glass-bg"></div>
     <div class="app-container">
         
-        <div class="tabs-header">
-            <button id="tab-main" class="tab-btn active">Main Assistant</button>
-            <button id="tab-sub" class="tab-btn">Research Sub-Agent<span id="sub-badge" class="badge hidden">Working</span></button>
-        </div>
         
         <div class="panes-container">
             <!-- PANE 1: Main Assistant -->
@@ -35,8 +31,12 @@
                         <div class="agent-avatar">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
                         </div>
-                        <div>
-                            <h1>CalGuy AI</h1>
+                        <div class="header-titles">
+                            <div class="breadcrumb-container">
+                                <h1 class="breadcrumb-active">CalGuy AI</h1>
+                                <span class="breadcrumb-separator">/</span>
+                                <h1 class="breadcrumb-inactive" id="switch-to-sub">Research Agent<span id="sub-badge" class="badge hidden" style="margin-left: 8px;">Working</span></h1>
+                            </div>
                             <span class="status-indicator">● Model Ready</span>
                         </div>
                     </header>
@@ -76,9 +76,13 @@
                         <div class="agent-avatar sub-avatar">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                         </div>
-                        <div>
-                            <h1>Research Agent Loop</h1>
-                            <span class="status-indicator sub-status">● Awaiting Task</span>
+                        <div class="header-titles">
+                            <div class="breadcrumb-container">
+                                <h1 class="breadcrumb-inactive" id="switch-to-main">CalGuy AI</h1>
+                                <span class="breadcrumb-separator">/</span>
+                                <h1 class="breadcrumb-active">Research Agent</h1>
+                            </div>
+                            <span id="sub-status-text" class="status-indicator sub-status">● Awaiting Task</span>
                         </div>
                     </header>
 
@@ -93,6 +97,7 @@
     </div>
 
     <div id="toast-container" class="toast-container"></div>
+
 
     <!-- Context Details Modal -->
     <div id="context-modal" class="modal-overlay">

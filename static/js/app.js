@@ -11,10 +11,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeModalBtn = document.getElementById('close-modal');
     const tokenCount = document.getElementById('token-count');
     const stopBtn = document.getElementById('stop-btn');
+    let currentSubAssistantMsgContainer = null;
     
-    // Tab Elements
-    const tabMain = document.getElementById('tab-main');
-    const tabSub = document.getElementById('tab-sub');
+    const subStatusText = document.getElementById('sub-status-text');
+    
+    // Switching Elements
+    const switchToMainBtn = document.getElementById('switch-to-main');
+    const switchToSubBtn = document.getElementById('switch-to-sub');
     const paneMain = document.getElementById('pane-main');
     const paneSub = document.getElementById('pane-sub');
     const subBadge = document.getElementById('sub-badge');
@@ -25,20 +28,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Tab Switching Logic
     function switchTab(tabId) {
         if (tabId === 'main') {
-            tabMain.classList.add('active');
-            tabSub.classList.remove('active');
             paneMain.classList.add('active');
             paneSub.classList.remove('active');
         } else {
-            tabMain.classList.remove('active');
-            tabSub.classList.add('active');
             paneMain.classList.remove('active');
             paneSub.classList.add('active');
         }
     }
 
-    tabMain.addEventListener('click', () => switchTab('main'));
-    tabSub.addEventListener('click', () => switchTab('sub'));
+    if (switchToMainBtn) switchToMainBtn.addEventListener('click', () => switchTab('main'));
+    if (switchToSubBtn) switchToSubBtn.addEventListener('click', () => switchTab('sub'));
 
     let isWaiting = false;
     let abortController = null;
@@ -210,11 +209,29 @@ document.addEventListener('DOMContentLoaded', () => {
                                 subContextList.innerHTML = '';
                                 subTokenCount.textContent = '0 Tokens';
                                 subBadge.classList.remove('hidden');
+                                if (subStatusText) subStatusText.textContent = '● Starting Research...';
+                                currentSubAssistantMsgContainer = null;
                                 switchTab('sub');
                                 updateSubTyping(data.content);
                             } else if (data.type === 'subagent_thought') {
-                                updateSubTyping(data.content);
+                                if (subStatusText) subStatusText.textContent = '● Investigating...';
+                                showSubTyping('Thinking...'); // Stable label
+                            } else if (data.type === 'subagent_thought_stream') {
+                                // Fallback for any old thought_stream events
+                                showSubTyping(data.content); 
+                            } else if (data.type === 'subagent_stream_chunk') {
+                                if (subStatusText) subStatusText.textContent = '● Writing Report...';
+                                if (!currentSubAssistantMsgContainer) {
+                                    currentSubAssistantMsgContainer = appendSubMessage('', 'agent-msg');
+                                }
+                                const p = currentSubAssistantMsgContainer.querySelector('p') || document.createElement('p');
+                                if (!p.parentElement) currentSubAssistantMsgContainer.appendChild(p);
+                                // Append chunk text
+                                p.textContent += data.content;
+                                subChatWindow.scrollTop = subChatWindow.scrollHeight;
                             } else if (data.type === 'subagent_tool_call') {
+                                if (subStatusText) subStatusText.textContent = `● Using ${data.tool}...`;
+                                currentSubAssistantMsgContainer = null; // Next message will be a new bubble
                                 updateSubTyping(null);
                                 appendSubStep(`Sub-Agent 🔎: ${data.tool}`, JSON.stringify(data.args, null, 2));
                                 addSubContextItem(`Tool Call: ${data.tool}`, JSON.stringify(data.args), 'assistant', data.tokens || 50, JSON.stringify(data.args, null, 2));
@@ -225,6 +242,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                 addSubContextItem(`Tool Result`, data.result.substring(0, 50) + '...', 'tool', data.tokens || 50, data.result);
                             } else if (data.type === 'subagent_final_report') {
                                 removeSubTyping();
+                                if (subStatusText) subStatusText.textContent = '● Awaiting Task';
+                                currentSubAssistantMsgContainer = null;
                                 subBadge.classList.add('hidden');
                                 switchTab('main');
                             } else if (data.type === 'tool_result') {
@@ -233,6 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 if (data.tool.includes('create') || data.tool.includes('delete')) {
                                     showToast(`Calendar Action Confirmed: ${data.tool}`, 'success');
                                 }
+
                             } else if (data.type === 'message') {
                                 removeTyping();
                                 if (!currentAssistantMsgContainer) {
@@ -470,6 +490,23 @@ document.addEventListener('DOMContentLoaded', () => {
         subContextList.scrollTop = 0;
     }
 
+    function appendSubMessage(text, className) {
+        const div = document.createElement('div');
+        div.className = `message ${className}`;
+        const p = document.createElement('p');
+        p.textContent = text;
+        div.appendChild(p);
+        
+        const typingIndicator = document.getElementById('sub-typing-indicator');
+        if (typingIndicator) {
+            subChatWindow.insertBefore(div, typingIndicator);
+        } else {
+            subChatWindow.appendChild(div);
+        }
+        subChatWindow.scrollTop = subChatWindow.scrollHeight;
+        return div;
+    }
+
     function updateSubContextItem(card, title, snippet, type, tokens = 100, fullContent = '') {
         const MAX_CONTEXT = 8192;
         const heightPct = (tokens / MAX_CONTEXT) * 100;
@@ -502,4 +539,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         subTokenCount.textContent = `${total} Tokens`;
     }
+
+
 });

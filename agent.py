@@ -198,19 +198,33 @@ class CalendarAgent:
                         if isinstance(tool_result, dict) and tool_result.get("SPAWN_SUBAGENT"):
                             query = tool_result.get("query")
                             yield {"type": "status", "content": "Initializing Research Sub-Agent...", "tokens": 0}
-                            brief = await self.memory.generate_brief()
+                            brief = ""
+                            async for b_event in self.memory.generate_brief():
+                                if b_event["type"] == "debug_event" or b_event["type"] == "debug_stream":
+                                    yield b_event
+                                elif b_event["type"] == "brief_result":
+                                    brief = b_event["content"]
                             
                             from research_agent import ResearchAgent
-                            subagent = ResearchAgent(model=self.model)
+                            debug_events = []
+                            def capture_debug(event):
+                                debug_events.append(event)
+                                
+                            subagent = ResearchAgent(model=self.model, debug_callback=capture_debug)
                             report = ""
                             
                             yield {"type": "subagent_start", "content": "Deep research initiated"}
                             
                             async for sub_event in subagent.research_loop(query, brief):
-                                # Forward events to the UI
+                                while debug_events:
+                                    yield debug_events.pop(0)
+                                    
                                 yield sub_event
                                 if sub_event.get("type") == "subagent_final_report":
                                     report = sub_event.get("content", "")
+                                    
+                            while debug_events:
+                                yield debug_events.pop(0)
                                     
                             tool_result = report
 
@@ -235,7 +249,8 @@ class CalendarAgent:
                         total_tokens = self.get_total_tokens()
                         logger.info(f"Token count ({total_tokens}) exceeds threshold mid-loop. Compressing memory...")
                         yield {"type": "status", "content": "Compressing conversation memory...", "tokens": 0}
-                        await self.memory.compress_history()
+                        async for c_event in self.memory.compress_history():
+                            yield c_event
                         yield {"type": "compressed"}
 
                     turn_count += 1
@@ -251,7 +266,8 @@ class CalendarAgent:
                 total_tokens = self.get_total_tokens()
                 logger.info(f"Token count ({total_tokens}) exceeds threshold at end of turn. Compressing memory...")
                 yield {"type": "status", "content": "Compressing conversation memory...", "tokens": 0}
-                await self.memory.compress_history()
+                async for c_event in self.memory.compress_history():
+                    yield c_event
                 yield {"type": "compressed"}
                 
         except Exception as e:

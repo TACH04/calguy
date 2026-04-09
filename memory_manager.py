@@ -108,14 +108,15 @@ class MemoryManager:
             message["content"] = pruned_note
         return message
 
-    async def generate_brief(self) -> str:
+    async def generate_brief(self):
         """
         Extracts a very brief summary of the user's implicit constraints, goals, 
         and key entities from the current active memory. Useful to pass to sub-agents.
         """
         non_system = [m for m in self.messages if m["role"] != "system" or m.get("is_memory")]
         if not non_system:
-            return "No prior context."
+            yield {"type": "brief_result", "content": "No prior context."}
+            return
             
         transcript_parts = []
         for m in non_system[-10:]: # just look at the recent tail
@@ -143,15 +144,28 @@ class MemoryManager:
         ]
         
         try:
+            yield {"type": "debug_event", "category": "briefing", "content": f"Extracting Context Brief for sub-agent..."}
+            yield {"type": "debug_event", "category": "briefing", "content": f"--- Internal Prompt ---\n{transcript}\n-----------------------"}
+                
             client = ollama.AsyncClient()
-            response = await client.chat(model=self.model, messages=brief_messages, stream=False)
-            if hasattr(response, "model_dump"):
-                response = response.model_dump()
-            brief = response.get("message", {}).get("content", "").strip()
-            return brief if brief else "No immediate context extracted."
+            response = await client.chat(model=self.model, messages=brief_messages, stream=True)
+            
+            brief = ""
+            async for chunk in response:
+                if hasattr(chunk, "model_dump"):
+                    chunk = chunk.model_dump()
+                content_chunk = chunk.get("message", {}).get("content", "")
+                brief += content_chunk
+                if content_chunk:
+                    yield {"type": "debug_stream", "category": "briefing", "content": content_chunk}
+                    
+            yield {"type": "debug_event", "category": "briefing", "content": f"\n[Briefing Complete]\n"}
+                
+            yield {"type": "brief_result", "content": brief.strip() if brief.strip() else "No immediate context extracted."}
         except Exception as e:
             logger.error(f"Failed to generate brief: {e}")
-            return "Failed to generate context brief."
+            yield {"type": "debug_event", "category": "error", "content": f"Failed to generate brief: {e}"}
+            yield {"type": "brief_result", "content": "Failed to generate context brief."}
 
     # ------------------------------------------------------------------
     # Recursive Summarization
@@ -202,11 +216,11 @@ class MemoryManager:
             {
                 "role": "system",
                 "content": (
-                    "You are a concise memory summarizer for an AI calendar assistant. "
-                    "Compress the conversation transcript into a short, dense memory block. "
-                    "Capture: events created/modified/deleted, what the user asked, "
-                    "outstanding tasks, and any key preferences or constraints mentioned. "
-                    "Be factual and brief. No pleasantries. "
+                    "You are an expert context compressor. You will be given a transcript of a conversation. "
+                    "Your job is to produce a dense, factual summary of the core facts, constraints, "
+                    "user preferences, and state of the conversation.\n"
+                    "Omit pleasantries. Retain specific dates, names, or actionable details.\n"
+                    "If the conversation includes previous compressed memory, integrate it into the new summary.\n"
                     "Use bullet points under clear headings where helpful."
                 ),
             },
@@ -218,18 +232,29 @@ class MemoryManager:
                 ),
             },
         ]
+        
+        yield {"type": "debug_event", "category": "compression", "content": f"--- Internal Prompt ---\n{transcript}\n-----------------------"}
 
         try:
             client = ollama.AsyncClient()
             response = await client.chat(
                 model=self.model,
                 messages=summarizer_messages,
-                stream=False,
+                stream=True,
             )
-            if hasattr(response, "model_dump"):
-                response = response.model_dump()
+            
+            summary_text = ""
+            async for chunk in response:
+                if hasattr(chunk, "model_dump"):
+                    chunk = chunk.model_dump()
+                content_chunk = chunk.get("message", {}).get("content", "")
+                summary_text += content_chunk
+                if content_chunk:
+                    yield {"type": "debug_stream", "category": "compression", "content": content_chunk}
 
-            summary_text = response.get("message", {}).get("content", "").strip()
+            summary_text = summary_text.strip()
+            
+            yield {"type": "debug_event", "category": "compression", "content": "\n[Compression Complete]\n"}
 
             if not summary_text:
                 logger.warning("Compression produced an empty summary, skipping replacement.")

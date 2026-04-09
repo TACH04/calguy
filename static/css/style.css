@@ -59,39 +59,38 @@ body {
     gap: 15px;
 }
 
-/* Tabs Header */
-.tabs-header {
-    display: flex;
-    gap: 10px;
-    padding-bottom: 5px;
-}
-
-.tab-btn {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    color: var(--text-muted);
-    padding: 10px 20px;
-    border-radius: 8px 8px 0 0;
-    cursor: pointer;
-    font-size: 0.9rem;
-    font-weight: 600;
-    transition: all 0.2s;
-    outline: none;
-    position: relative;
+/* Breadcrumb Status Header */
+.breadcrumb-container {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
+    margin-bottom: 4px;
 }
 
-.tab-btn:hover {
+.breadcrumb-separator {
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    font-weight: 300;
+}
+
+.breadcrumb-active {
+    font-size: 1.2rem;
+    margin: 0;
     color: var(--text-main);
-    background: rgba(255, 255, 255, 0.05);
 }
 
-.tab-btn.active {
-    background: rgba(30, 41, 59, 0.9);
-    color: var(--accent);
-    border-bottom: 2px solid var(--accent);
+.breadcrumb-inactive {
+    font-size: 1.2rem;
+    margin: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.2s;
+    display: flex;
+    align-items: center;
+}
+
+.breadcrumb-inactive:hover {
+    color: var(--tool-color);
 }
 
 .badge {
@@ -294,10 +293,7 @@ body {
     box-shadow: 0 0 15px var(--accent-glow);
 }
 
-.chat-header h1 {
-    font-size: 1.2rem;
-    margin-bottom: 4px;
-}
+
 
 .status-indicator {
     font-size: 0.8rem;
@@ -624,3 +620,5 @@ body {
     border-radius: 4px;
     font-family: monospace;
 }
+
+

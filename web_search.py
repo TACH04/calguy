@@ -70,12 +70,15 @@ if __name__ == "__main__":
     print("-" * 20)
     print(search_web(test_query))
 
-async def summarize_scrape(md_content, query):
+async def summarize_scrape(md_content, query, debug_callback=None):
     """
     Cleans raw markdown and uses Ollama to extract
     highly relevant information related to the specific query.
     """
     logger.info(f"Summarizing scrape for query: '{query}'")
+    if debug_callback:
+        debug_callback({"type": "debug_event", "category": "scraping", "content": f"Summarizing large scrape for target query: '{query}'..."})
+        
     # Quick cleaning: strip image tags to save tokens
     clean_md = re.sub(r'!\[.*?\]\(.*?\)', '', md_content)
     # Basic truncation to ensure we don't blow up Ollama context
@@ -100,15 +103,28 @@ async def summarize_scrape(md_content, query):
     
     try:
         client = ollama.AsyncClient()
-        response = await client.chat(model=OLLAMA_MODEL, messages=messages, stream=False)
-        if hasattr(response, "model_dump"):
-            response = response.model_dump()
-        return response.get("message", {}).get("content", "Failed to extract summary.")
+        response = await client.chat(model=OLLAMA_MODEL, messages=messages, stream=True)
+        
+        summary = ""
+        async for chunk in response:
+            if hasattr(chunk, "model_dump"):
+                chunk = chunk.model_dump()
+            content_chunk = chunk.get("message", {}).get("content", "")
+            summary += content_chunk
+            if debug_callback and content_chunk:
+                debug_callback({"type": "debug_stream", "category": "scraping", "content": content_chunk})
+                
+        if debug_callback:
+            debug_callback({"type": "debug_event", "category": "scraping", "content": "\n[Summarization Complete]\n"})
+            
+        return summary
     except Exception as e:
         logger.error(f"Error in summarize_scrape: {e}")
+        if debug_callback:
+            debug_callback({"type": "debug_event", "category": "error", "content": f"Failed to summarize: {str(e)}"})
         return md_content[:2000] + "... [Failed to summarize, truncated]"
 
-async def scrape_url(url, query=None):
+async def scrape_url(url, query=None, debug_callback=None):
     """
     Scrapes a URL using Firecrawl and returns a clean, relevant summary.
     If query is provided, it extracts info only relevant to the query.
@@ -137,7 +153,7 @@ async def scrape_url(url, query=None):
             return f"No readable content extracted from {url}"
             
         if query:
-            summary = await summarize_scrape(md_content, query)
+            summary = await summarize_scrape(md_content, query, debug_callback=debug_callback)
             return f"--- SCRAPED & SUMMARIZED CONTENT FROM {url} ---\n{summary}\n--- END SUMMARY ---"
         else:
             CHAR_LIMIT = 4000
