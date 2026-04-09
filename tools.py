@@ -5,6 +5,7 @@ from web_search import search_web, scrape_url
 from research_agent import ResearchAgent
 from dotenv import load_dotenv
 from tool_registry import ToolRegistry
+from skill_loader import get_skill_content
 
 logger = logging.getLogger('tools')
 
@@ -28,7 +29,8 @@ registry = ToolRegistry()
             }
         },
         "required": []
-    }
+    },
+    required_skill="Calendar Management"
 )
 def list_upcoming_events_tool(max_results=10):
     return list_upcoming_events(max_results)
@@ -57,7 +59,8 @@ def list_upcoming_events_tool(max_results=10):
             }
         },
         "required": ["summary", "start_time", "end_time"]
-    }
+    },
+    required_skill="Calendar Management"
 )
 def create_event_tool(summary, start_time, end_time, description=""):
     return create_event(summary, description, start_time, end_time, timezone=SERVER_TIMEZONE)
@@ -74,7 +77,8 @@ def create_event_tool(summary, start_time, end_time, description=""):
             }
         },
         "required": ["event_id"]
-    }
+    },
+    required_skill="Calendar Management"
 )
 def delete_event_tool(event_id):
     return delete_event(event_id)
@@ -91,7 +95,8 @@ def delete_event_tool(event_id):
             }
         },
         "required": ["date_string"]
-    }
+    },
+    required_skill="Calendar Management"
 )
 def verify_date_tool(date_string):
     return verify_date(date_string)
@@ -118,8 +123,8 @@ def search_web_tool(query, max_results=5):
     return search_web(query, max_results)
 
 @registry.register(
-    name="research_agent",
-    description="Spawn a sub-agent to perform deep, multi-step research on a complex topic. Resolves complex questions or deep-dives into a topic.",
+    name="deep_research",
+    description="Spawn a sub-agent to perform deep, multi-step research on a complex topic. Use for complex questions, synthesis tasks, or when asked to 'research' something thoroughly.",
     parameters={
         "type": "object",
         "properties": {
@@ -129,12 +134,10 @@ def search_web_tool(query, max_results=5):
             }
         },
         "required": ["query"]
-    }
+    },
+    required_skill="Deep Research"
 )
-def research_agent_tool(query):
-    # This must return the generator. We construct the agent and start the loop.
-    # Note: we need the context brief, which agent.py will have to inject, but for now we'll let agent.py handle the `research_agent_tool` invocation directly since it's a special generator, or we pass a placeholder. Actually, let's keep it simple: the tool registry just flags it, but agent.py handles it specially.
-    # Or, we can let tools return a special "spawn_subagent" struct. Let's just return a dict that agent.py catches.
+def deep_research_tool(query):
     return {"SPAWN_SUBAGENT": True, "query": query}
 
 @registry.register(
@@ -155,6 +158,23 @@ def scrape_url_tool(url):
     return scrape_url(url)
 
 # --- Compatibility Layer ---
+
+@registry.register(
+    name="get_skill",
+    description="Load the full instructions for a specific skill by name. Call this before using a skill's tools to get detailed guidance on how to use them correctly.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "skill_name": {
+                "type": "string",
+                "description": "The exact name of the skill to load (e.g. 'Calendar Management', 'Deep Research')."
+            }
+        },
+        "required": ["skill_name"]
+    }
+)
+def get_skill_tool(skill_name):
+    return get_skill_content(skill_name)
 
 # Export OLLAMA_TOOLS for agent.py
 OLLAMA_TOOLS = registry.get_ollama_tools()

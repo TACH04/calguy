@@ -9,7 +9,7 @@ class ToolRegistry:
     def __init__(self):
         self._tools = {}
 
-    def register(self, name, description, parameters):
+    def register(self, name, description, parameters, required_skill=None):
         """
         Decorator to register a function as a tool.
         
@@ -17,10 +17,12 @@ class ToolRegistry:
             name (str): The name of the tool.
             description (str): A description of what the tool does.
             parameters (dict): JSON Schema describing the tool's parameters.
+            required_skill (str, optional): The name of the skill that must be loaded before using this tool.
         """
         def decorator(func):
             self._tools[name] = {
                 "func": func,
+                "required_skill": required_skill,
                 "schema": {
                     "type": "function",
                     "function": {
@@ -32,6 +34,13 @@ class ToolRegistry:
             }
             return func
         return decorator
+    def get_required_skill(self, name):
+        """
+        Returns the required skill name for a tool, if any.
+        """
+        if name in self._tools:
+            return self._tools[name].get("required_skill")
+        return None
 
     def execute(self, name, arguments):
         """

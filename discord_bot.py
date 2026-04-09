@@ -58,12 +58,12 @@ async def on_ready():
 @bot.command(name='help')
 async def help_cmd(ctx):
     """Displays this help message."""
-    help_text = """**CalGuy Commands:**
+    help_text = """**Brolympus Bot Commands:**
 `!clear` - Reset my conversation context immediately.
 `!session` - Display current session details (model, message count, idle time).
 `!help` - Display this message.
 
-Or just mention me or talk directly to me to check and modify your Google Calendar!"""
+Just mention me or talk directly to me to check and modify the squad's Google Calendar!"""
     await ctx.send(help_text)
 
 @bot.command(name='clear')
@@ -122,7 +122,7 @@ async def on_message(message):
 
     # If the message is empty after stripping the mention, don't respond
     if not content and is_mentioned:
-        await message.reply("Yes? How can I help you with your calendar today? (Type `!help` for commands)")
+        await message.reply("How can I help the squad today? (Type `!help` for commands)")
         return
 
     sender_name = message.author.display_name
