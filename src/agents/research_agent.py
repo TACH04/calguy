@@ -174,7 +174,29 @@ Target Research Query:
                         turn_count += 1
                         
             if turn_count >= MAX_TURNS:
-                yield {"type": "subagent_final_report", "content": "Research stopped: Maximum number of investigation steps reached. Please refine your query."}
+                yield {"type": "subagent_thought", "content": "Maximum investigation steps reached. Synthesizing available findings..."}
+                
+                # Add a prompt for summary
+                self.messages.append({
+                    "role": "user",
+                    "content": "You have reached the maximum number of investigation steps. Please provide a comprehensive summary of all findings discovered so far. If you were unable to find specific details, state that clearly."
+                })
+                
+                # Execute one final chat to get the summary
+                response = await client.chat(
+                    model=self.model,
+                    messages=self.messages,
+                    options={"num_ctx": OLLAMA_NUM_CTX}
+                    # No tools for the final summary
+                )
+                
+                # Async response is a bit different, we might need to handle streaming or just get the final content
+                # But since we didn't use stream=True here, it should be a single response object
+                if hasattr(response, 'model_dump'):
+                    response = response.model_dump()
+                
+                summary = response.get('message', {}).get('content', "Failed to generate summary.")
+                yield {"type": "subagent_final_report", "content": summary}
 
         except Exception as e:
             logger.error(f"Research agent error: {e}")
