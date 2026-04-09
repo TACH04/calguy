@@ -15,7 +15,7 @@ import ollama
 from dotenv import load_dotenv
 
 load_dotenv()
-logger = logging.getLogger("memory_manager")
+logger = logging.getLogger("core.memory_manager")
 
 # Default thresholds
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "32768"))

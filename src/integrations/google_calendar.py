@@ -8,7 +8,7 @@ import datetime
 import logging
 from dotenv import load_dotenv
 
-logger = logging.getLogger('google_calendar')
+logger = logging.getLogger('integrations.google_calendar')
 
 load_dotenv()
 

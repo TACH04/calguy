@@ -6,10 +6,10 @@ import logging
 from dotenv import load_dotenv
 import ollama
 
-logger = logging.getLogger('agent')
+logger = logging.getLogger('agents.agent')
 
-from tools import OLLAMA_TOOLS, execute_tool
-from memory_manager import MemoryManager, estimate_tokens
+from core.tools import OLLAMA_TOOLS, execute_tool
+from core.memory_manager import MemoryManager, estimate_tokens
 
 load_dotenv()
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:30b")
@@ -218,7 +218,7 @@ class CalendarAgent:
                                 elif b_event["type"] == "brief_result":
                                     brief = b_event["content"]
                             
-                            from research_agent import ResearchAgent
+                            from agents.research_agent import ResearchAgent
                             debug_events = []
                             def capture_debug(event):
                                 debug_events.append(event)

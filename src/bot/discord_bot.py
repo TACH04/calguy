@@ -5,7 +5,7 @@ import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
-from agent import CalendarAgent
+from agents.agent import CalendarAgent
 
 # Configure logging
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -27,7 +27,7 @@ root_logger.setLevel(logging.INFO)
 root_logger.addHandler(file_handler)
 root_logger.addHandler(console_handler)
 
-logger = logging.getLogger('discord_bot')
+logger = logging.getLogger('bot.discord_bot')
 
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")

@@ -6,7 +6,9 @@ import os
 import re
 
 def _get_skills_dir():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'skills')
+    # skill_loader.py is in src/core/, so skills/ is at ../../skills/
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(base_dir, 'skills')
 
 def _parse_skill_frontmatter(content):
     """Parses YAML frontmatter from a SKILL.md file. Returns (name, description)."""

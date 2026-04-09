@@ -2,9 +2,9 @@ import os
 import re
 import ollama
 import logging
-from web_search import search_web, scrape_url
+from integrations.web_search import search_web, scrape_url
 
-logger = logging.getLogger('research_agent')
+logger = logging.getLogger('agents.research_agent')
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:30b")
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
 

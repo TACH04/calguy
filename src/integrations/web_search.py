@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logger = logging.getLogger('web_search')
+logger = logging.getLogger('integrations.web_search')
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8080")
 FIRECRAWL_URL = os.getenv("FIRECRAWL_URL", "http://localhost:3002")

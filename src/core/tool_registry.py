@@ -1,6 +1,6 @@
 import logging
 
-logger = logging.getLogger('tool_registry')
+logger = logging.getLogger('core.tool_registry')
 
 class ToolRegistry:
     """

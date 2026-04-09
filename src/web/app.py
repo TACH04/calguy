@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify, Response
 from flask_cors import CORS
-from agent import CalendarAgent
+from agents.agent import CalendarAgent
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -30,7 +30,7 @@ root_logger.setLevel(logging.INFO)
 root_logger.addHandler(file_handler)
 root_logger.addHandler(console_handler)
 
-logger = logging.getLogger('web_app')
+logger = logging.getLogger('web.app')
 
 # Mute noisy Werkzeug logs
 werkzeug_log = logging.getLogger('werkzeug')

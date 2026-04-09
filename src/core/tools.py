@@ -1,11 +1,11 @@
 import os
 import logging
-from google_calendar import list_upcoming_events, create_event, delete_event, verify_date
-from web_search import search_web, scrape_url
-from research_agent import ResearchAgent
+from integrations.google_calendar import list_upcoming_events, create_event, delete_event, verify_date
+from integrations.web_search import search_web, scrape_url
+from agents.research_agent import ResearchAgent
 from dotenv import load_dotenv
-from tool_registry import ToolRegistry
-from skill_loader import get_skill_content
+from core.tool_registry import ToolRegistry
+from core.skill_loader import get_skill_content
 
 logger = logging.getLogger('tools')
 
