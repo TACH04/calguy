@@ -3,6 +3,8 @@ import re
 import ollama
 import logging
 from integrations.web_search import search_web, scrape_url
+from core.prompt_loader import load_prompt
+
 
 logger = logging.getLogger('agents.research_agent')
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:30b")
@@ -73,19 +75,13 @@ class ResearchAgent:
         """
         An async generator that streams thoughts, sub-tool calls, and the final report.
         """
-        system_prompt = f"""You are a specialized Research Agent.
-Your task is to thoroughly investigate the following query and provide a comprehensive, factual report.
-You have a limited number of turns, so be efficient. 
-ALWAYS verify information across multiple sources if possible.
-If a scrape returns irrelevant information (like a landing page or ad), try a different search query or engine.
-Do NOT output conversational filler in your thought processes. Only invoke tools, or output the final report.
+        template = load_prompt("research_system.md")
 
-Context Brief from Main Conversation:
-{context_brief}
+        system_prompt = template.format(
+            context_brief=context_brief,
+            query=query
+        )
 
-Target Research Query:
-{query}
-"""
         self.messages = [{"role": "system", "content": system_prompt}]
         
         yield {"type": "subagent_thought", "content": f"Initializing research sequence for: '{query}'..."}

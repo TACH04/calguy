@@ -1,7 +1,12 @@
 import os
 import requests
 import logging
+import time
+import uuid
+import asyncio
+from core.prompt_loader import load_prompt
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -17,7 +22,7 @@ import urllib.parse
 import re
 import ollama
 
-def search_web(query, max_results=5):
+async def search_web(query, max_results=5):
     """
     Searches the web using a local SearXNG instance.
     Returns a string summary of the top results.
@@ -26,15 +31,14 @@ def search_web(query, max_results=5):
     
     try:
         # Construct the URL for the SearXNG JSON API
-        # We use format=json to get structured data
         url = f"{SEARXNG_URL}/search"
         params = {
             "q": query,
             "format": "json",
-            "engines": "google,bing,duckduckgo,brave" # Choose some common engines
+            "engines": "google,bing,duckduckgo,brave"
         }
         
-        response = requests.get(url, params=params, timeout=10)
+        response = await asyncio.to_thread(requests.get, url, params=params, timeout=10)
         response.raise_for_status()
         
         data = response.json()
@@ -43,16 +47,12 @@ def search_web(query, max_results=5):
         if not results:
             return "No results found for that query."
             
-        # Format the top results into a concise string for the LLM
         formatted_results = []
         for i, res in enumerate(results[:max_results]):
             title = res.get("title", "No Title")
             link = res.get("url", "No URL")
             snippet = res.get("content", "No snippet available.")
-            
-            # Clean snippet (sometimes contains HTML or extra whitespace)
             snippet = snippet.replace("\n", " ").strip()
-            
             formatted_results.append(f"{i+1}. {title}\n   URL: {link}\n   Snippet: {snippet}")
             
         return "\n\n".join(formatted_results)
@@ -64,40 +64,33 @@ def search_web(query, max_results=5):
         logger.error(f"Unexpected error during search: {e}")
         return f"Error: An unexpected error occurred during the search: {str(e)}"
 
-if __name__ == "__main__":
-    # Quick test if run directly
-    test_query = "Who is the CEO of Google?"
-    print(f"Testing search for: {test_query}")
-    print("-" * 20)
-    print(search_web(test_query))
-
-async def summarize_scrape(md_content, query, debug_callback=None):
+async def summarize_scrape(md_content, query, debug_callback=None, trace_id=""):
     """
     Cleans raw markdown and uses Ollama to extract
     highly relevant information related to the specific query.
     """
-    logger.info(f"Summarizing scrape for query: '{query}'")
+    logger.info(f"[{trace_id}] Starting summarization for query: '{query}'")
+    start_time = time.time()
+    
     if debug_callback:
-        debug_callback({"type": "debug_event", "category": "scraping", "content": f"Summarizing large scrape for target query: '{query}'..."})
+        debug_callback({"type": "debug_event", "category": "scraping", "content": f"Summarizing content for: '{query}'..."})
         
-    # Quick cleaning: strip image tags to save tokens
     clean_md = re.sub(r'!\[.*?\]\(.*?\)', '', md_content)
-    # Truncation to ensure we don't blow up Ollama context
-    # 1 token approx 4 chars. We take OLLAMA_NUM_CTX * 3 to be safe.
     max_chars = OLLAMA_NUM_CTX * 3
     if len(clean_md) > max_chars:
+        logger.info(f"[{trace_id}] Truncating markdown from {len(clean_md)} to {max_chars} characters.")
         clean_md = clean_md[:max_chars]
         
+    system_prompt = load_prompt("summarize_scrape.md")
+
+    
     messages = [
         {
             "role": "system",
-            "content": (
-                "You are an expert data extractor. The user will provide raw markdown scraped from a website and a target query. "
-                "Your objective is to extract ONLY the facts and data relevant to the query. "
-                "Strip out all ads, boilerplate, navigation text, and unrelated content. "
-                "Output your extraction as a concise, dense report (max 500 words)."
-            )
+            "content": system_prompt
         },
+
+
         {
             "role": "user",
             "content": f"Query: {query}\n\nRaw Scrape Data:\n{clean_md}"
@@ -106,6 +99,8 @@ async def summarize_scrape(md_content, query, debug_callback=None):
     
     try:
         client = ollama.AsyncClient()
+        logger.info(f"[{trace_id}] Requesting Ollama stream (Model: {OLLAMA_MODEL})")
+        
         response = await client.chat(
             model=OLLAMA_MODEL, 
             messages=messages, 
@@ -114,20 +109,34 @@ async def summarize_scrape(md_content, query, debug_callback=None):
         )
         
         summary = ""
+        chunk_count = 0
+        last_log_time = time.time()
+        
         async for chunk in response:
             if hasattr(chunk, "model_dump"):
                 chunk = chunk.model_dump()
             content_chunk = chunk.get("message", {}).get("content", "")
             summary += content_chunk
+            chunk_count += 1
+            
+            # Log progress every 50 chunks or 5 seconds
+            current_time = time.time()
+            if chunk_count % 50 == 0 or (current_time - last_log_time) > 5.0:
+                logger.info(f"[{trace_id}] Summarization progress: {len(summary)} chars generated ({chunk_count} chunks)...")
+                last_log_time = current_time
+            
             if debug_callback and content_chunk:
                 debug_callback({"type": "debug_stream", "category": "scraping", "content": content_chunk})
                 
+        duration = time.time() - start_time
+        logger.info(f"[{trace_id}] Summarization complete. Duration: {duration:.2f}s, Total Length: {len(summary)} chars.")
+        
         if debug_callback:
-            debug_callback({"type": "debug_event", "category": "scraping", "content": "\n[Summarization Complete]\n"})
+            debug_callback({"type": "debug_event", "category": "scraping", "content": f"\n[Summarization Complete in {duration:.1f}s]\n"})
             
         return summary
     except Exception as e:
-        logger.error(f"Error in summarize_scrape: {e}")
+        logger.error(f"[{trace_id}] Error in summarize_scrape: {e}")
         if debug_callback:
             debug_callback({"type": "debug_event", "category": "error", "content": f"Failed to summarize: {str(e)}"})
         return md_content[:2000] + "... [Failed to summarize, truncated]"
@@ -137,10 +146,14 @@ async def scrape_url(url, query=None, debug_callback=None):
     Scrapes a URL using Firecrawl and returns a clean, relevant summary.
     If query is provided, it extracts info only relevant to the query.
     """
-    logger.info(f"Scraping URL with Firecrawl: {url}")
+    trace_id = f"sc_{uuid.uuid4().hex[:6]}"
+    logger.info(f"[{trace_id}] Initiating scrape for: {url}")
+    start_time = time.time()
+    
+    if debug_callback:
+        debug_callback({"type": "debug_event", "category": "scraping", "content": f"Scraping URL: {url}..."})
     
     try:
-        # Firecrawl /v1/scrape API
         scrape_endpoint = f"{FIRECRAWL_URL}/v1/scrape"
         headers = {"Content-Type": "application/json"}
         if FIRECRAWL_API_KEY:
@@ -148,30 +161,42 @@ async def scrape_url(url, query=None, debug_callback=None):
             
         payload = {"url": url, "formats": ["markdown"]}
         
-        # NOTE: requests is blocky, ideally we'd use httpx, but for script simplicity we wrap in asyncio or rely on sync requests taking time.
-        response = requests.post(scrape_endpoint, json=payload, headers=headers, timeout=30)
+        logger.info(f"[{trace_id}] Sending POST request to Firecrawl...")
+        response = await asyncio.to_thread(requests.post, scrape_endpoint, json=payload, headers=headers, timeout=60)
+        
+        scrape_duration = time.time() - start_time
+        logger.info(f"[{trace_id}] Firecrawl response received. Status: {response.status_code}, Duration: {scrape_duration:.2f}s")
+        
         response.raise_for_status()
         
         data = response.json()
         if not data.get("success"):
-            return f"Error: Firecrawl failed to scrape {url}. Reason: {data.get('error', 'Unknown')}"
+            error_msg = data.get('error', 'Unknown error')
+            logger.error(f"[{trace_id}] Firecrawl failed: {error_msg}")
+            return f"Error: Firecrawl failed to scrape {url}. Reason: {error_msg}"
             
         md_content = data.get("data", {}).get("markdown", "")
         if not md_content:
+            logger.warning(f"[{trace_id}] Firecrawl returned success but empty markdown.")
             return f"No readable content extracted from {url}"
             
+        logger.info(f"[{trace_id}] Extracted {len(md_content)} chars of markdown.")
+        
         if query:
-            summary = await summarize_scrape(md_content, query, debug_callback=debug_callback)
+            summary = await summarize_scrape(md_content, query, debug_callback=debug_callback, trace_id=trace_id)
             return f"--- SCRAPED & SUMMARIZED CONTENT FROM {url} ---\n{summary}\n--- END SUMMARY ---"
         else:
-            CHAR_LIMIT = OLLAMA_NUM_CTX * 2 # Larger limit for raw content if no query
+            CHAR_LIMIT = OLLAMA_NUM_CTX * 2 
             if len(md_content) > CHAR_LIMIT:
                 md_content = md_content[:CHAR_LIMIT] + f"... [Content Truncated at {CHAR_LIMIT} chars]"
             return f"--- SCRAPED CONTENT FROM {url} ---\n{md_content}\n--- END SCRAPED CONTENT ---"
         
+    except requests.exceptions.Timeout:
+        logger.error(f"[{trace_id}] Timeout connecting to Firecrawl after {time.time() - start_time:.1f}s")
+        return f"Error: Firecrawl timed out while scraping {url}. The site might be too slow or blocking requests."
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error connecting to Firecrawl: {e}")
-        return f"Error: Failed to connect to Firecrawl at {FIRECRAWL_URL}. Make sure it is running."
+        logger.error(f"[{trace_id}] Connection error to Firecrawl: {e}")
+        return f"Error: Failed to connect to Firecrawl. Make sure the service is running at {FIRECRAWL_URL}."
     except Exception as e:
-        logger.error(f"Unexpected error during scrape: {e}")
+        logger.error(f"[{trace_id}] Unexpected error during scrape: {e}")
         return f"Error: An unexpected error occurred: {str(e)}"

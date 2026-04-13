@@ -33,7 +33,7 @@ class ToolRegistry:
             return func
         return decorator
 
-    def execute(self, name, arguments):
+    def execute(self, name, arguments, debug_callback=None):
         """
         Executes a registered tool by name with the provided arguments.
         """
@@ -44,8 +44,16 @@ class ToolRegistry:
         
         func = self._tools[name]["func"]
         try:
-            # We assume the arguments passed by the LLM match the function signature
-            return func(**arguments)
+            # We check if the tool function accepts a debug_callback
+            import inspect
+            sig = inspect.signature(func)
+            
+            if 'debug_callback' in sig.parameters:
+                return func(**arguments, debug_callback=debug_callback)
+            else:
+                # We assume the arguments passed by the LLM match the function signature
+                return func(**arguments)
+                
         except TypeError as e:
             # Handle cases where LLM passes extra or missing arguments
             error_msg = f"Error: Argument mismatch (TypeError) for tool '{name}': {str(e)}"

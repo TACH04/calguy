@@ -11,9 +11,12 @@ logger = logging.getLogger('tools')
 
 load_dotenv()
 SERVER_TIMEZONE = os.getenv("SERVER_TIMEZONE", "America/Los_Angeles")
+ENABLE_WEB_SCRAPING = os.getenv("ENABLE_WEB_SCRAPING", "false").lower() == "true"
+ENABLE_DEEP_RESEARCH = os.getenv("ENABLE_DEEP_RESEARCH", "false").lower() == "true"
 
 # Initialize the registry
 registry = ToolRegistry()
+
 
 # --- Tool Registrations ---
 
@@ -118,39 +121,43 @@ def verify_date_tool(date_string):
 def search_web_tool(query, max_results=5):
     return search_web(query, max_results)
 
-@registry.register(
-    name="investigate_topic",
-    description="Gather detailed information on a topic by performing multiple search and reading steps. Use this for complex questions or when you need more than a simple search result.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The topic or question to investigate in depth."
-            }
-        },
-        "required": ["query"]
-    }
-)
-def investigate_topic_tool(query):
-    return {"SPAWN_SUBAGENT": True, "query": query}
 
-@registry.register(
-    name="scrape_url",
-    description="Scrape the full readable content of a specific URL. Use this when you have a specific link you want to read in depth.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "url": {
-                "type": "string",
-                "description": "The full URL to scrape."
-            }
-        },
-        "required": ["url"]
-    }
-)
-def scrape_url_tool(url):
-    return scrape_url(url)
+if ENABLE_DEEP_RESEARCH:
+    @registry.register(
+        name="investigate_topic",
+        description="Gather detailed information on a topic by performing multiple search and reading steps. Use this for complex questions or when you need more than a simple search result.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The topic or question to investigate in depth."
+                }
+            },
+            "required": ["query"]
+        }
+    )
+    def investigate_topic_tool(query):
+        return {"SPAWN_SUBAGENT": True, "query": query}
+
+if ENABLE_WEB_SCRAPING:
+    @registry.register(
+        name="scrape_url",
+        description="Scrape the full readable content of a specific URL. Use this when you have a specific link you want to read in depth.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The full URL to scrape."
+                }
+            },
+            "required": ["url"]
+        }
+    )
+    def scrape_url_tool(url, debug_callback=None):
+        return scrape_url(url, debug_callback=debug_callback)
+
 
 # --- Compatibility Layer ---
 
@@ -158,10 +165,10 @@ def scrape_url_tool(url):
 # Export OLLAMA_TOOLS for agent.py
 OLLAMA_TOOLS = registry.get_ollama_tools()
 
-def execute_tool(name, arguments):
+def execute_tool(name, arguments, debug_callback=None):
     """
     Compatibility wrapper for executing tools via the registry.
     """
     # Note: We keep the logging here to match previous behavior
     logger.info(f"Executing tool: {name} with args: {arguments}")
-    return registry.execute(name, arguments)
+    return registry.execute(name, arguments, debug_callback=debug_callback)

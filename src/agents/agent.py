@@ -3,6 +3,8 @@ import re
 import datetime
 import time
 import logging
+import asyncio
+import inspect
 from dotenv import load_dotenv
 import ollama
 
@@ -10,6 +12,8 @@ logger = logging.getLogger('agents.agent')
 
 from core.tools import OLLAMA_TOOLS, execute_tool
 from core.memory_manager import MemoryManager, estimate_tokens
+from core.prompt_loader import load_prompt
+
 
 load_dotenv()
 MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:30b")
@@ -20,30 +24,27 @@ SERVER_TIMEZONE = os.getenv("SERVER_TIMEZONE", "America/Los_Angeles")
 def get_system_prompt():
     """Generates a dynamic system prompt with the current time and context."""
     now = datetime.datetime.now()
-    return f"""You are Brolympus Bot. You manage the crew's shared Google Calendar and search the web for information using the tools provided.
-Current Date and Time: {now.strftime('%A, %Y-%m-%d %H:%M:%S')}
-Timezone: {SERVER_TIMEZONE}
+    
+    enable_scraping = os.getenv("ENABLE_WEB_SCRAPING", "false").lower() == "true"
+    enable_deep_research = os.getenv("ENABLE_DEEP_RESEARCH", "false").lower() == "true"
 
-### 📅 CALENDAR MANAGEMENT PROTOCOLS
-1. **MANDATORY Date Verification**: When resolving relative dates (like "next Tuesday", "tomorrow", or "next weekend"), you MUST ALWAYS use the `verify_date` tool to confirm that the chosen date string actually aligns with the requested day of the week. Do this BEFORE scheduling the event.
-2. **Missing Year**: If a year is not specified, assume the current year or the next occurrence of that date.
-3. **Always Confirm Details**: When scheduling events, always confirm the time and duration.
-4. **Event Editing**: To edit an event, delete the original event and create a new one with the updated details. Do not attempt to modify events in place.
+    template = load_prompt("main_system.md")
 
-### 🔍 WEB SEARCH & INVESTIGATION PROTOCOLS
-1. **Tool Hierarchy**:
-   - `search_web`: Use for quick facts, current headlines, or finding URLs.
-   - `scrape_url`: Use to read the full content of a specific page when snippets aren't enough.
-   - `investigate_topic`: Use for complex questions requiring synthesis from multiple sources or a comprehensive report.
-2. **Multi-Query Strategy**: Never rely on a single search query for complex topics. If the first fails, rephrase and try again.
-3. **Citation**: Cite your findings if possible (e.g., "According to [Source Name]...").
-4. **No Placeholders**: Do not guess or hallucinate details missing from search results.
+    
+    optional_tools = ""
+    if enable_scraping:
+        optional_tools += "\n   - `scrape_url`: Use to read the full content of a specific page when snippets aren't enough."
+    
+    if enable_deep_research:
+        optional_tools += "\n   - `investigate_topic`: Use for complex questions requiring synthesis from multiple sources or a comprehensive report."
 
-### RESPONSE GUIDELINES
-- Be concise.
-- Let the user know what tool actions were taken.
-- IMPORTANT: Use ONLY the JSON tool calling mechanism. No XML, no preamble.
-"""
+    return template.format(
+        now=now.strftime('%A, %Y-%m-%d %H:%M:%S'),
+        timezone=SERVER_TIMEZONE,
+        optional_tools=optional_tools
+    )
+
+
 
 
 
@@ -179,7 +180,7 @@ class GeneralAgent:
                         full_message = re.sub(r'<function=.*?>(.*?)</function>\n?(?:</tool_call>\n?)?', '', full_message, flags=re.DOTALL).strip()
                         logger.info(f"Regex safety net dynamically captured tool call: {func_name}")
                 
-                msg = {"role": "assistant", "content": full_message}
+                msg = {"role": "assistant", "content": full_message, "tokens": estimate_tokens(full_message)}
                 if tool_calls:
                     msg["tool_calls"] = tool_calls
 
@@ -199,13 +200,37 @@ class GeneralAgent:
                             "tokens": estimate_tokens(tool_name) + estimate_tokens(str(tool_args))
                         }
 
-                        import inspect
+                        # Support real-time debug events from tools
+                        debug_queue = asyncio.Queue()
+                        def debug_callback(event):
+                            debug_queue.put_nowait(event)
+
+                        # Execute tool in a task so we can poll for debug events
+                        raw_result = execute_tool(tool_name, tool_args, debug_callback=debug_callback)
                         
-                        raw_result = execute_tool(tool_name, tool_args)
                         if inspect.isawaitable(raw_result):
-                            tool_result = await raw_result
+                            # It's a coroutine (like scrape_url), so we can poll for debug events
+                            tool_coro_task = asyncio.create_task(raw_result)
+                            while not tool_coro_task.done():
+                                try:
+                                    # Wait for a debug event or short timeout
+                                    d_event = await asyncio.wait_for(debug_queue.get(), timeout=0.2)
+                                    yield d_event
+                                except asyncio.TimeoutError:
+                                    pass
+                                except Exception as e:
+                                    logger.error(f"Error polling debug events: {e}")
+                                    break
+                            
+                            tool_result = await tool_coro_task
+                            # Drain any remaining debug events
+                            while not debug_queue.empty():
+                                yield debug_queue.get_nowait()
                         else:
+                            # It's a sync result, debug events (if any) are already in the queue
                             tool_result = raw_result
+                            while not debug_queue.empty():
+                                yield debug_queue.get_nowait()
                         
 
                         if isinstance(tool_result, dict) and tool_result.get("SPAWN_SUBAGENT"):
@@ -286,7 +311,6 @@ class GeneralAgent:
         except Exception as e:
             yield {"type": "error", "content": str(e)}
 
-import asyncio
 
 async def cli_chat_loop():
     print(f"Starting Brolympus Bot CLI Harness (Model: {MODEL})")

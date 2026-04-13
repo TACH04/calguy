@@ -12,7 +12,9 @@ No persistence between sessions — this is ephemeral, in-memory only.
 import os
 import logging
 import ollama
+from core.prompt_loader import load_prompt
 from dotenv import load_dotenv
+
 
 load_dotenv()
 logger = logging.getLogger("core.memory_manager")
@@ -133,15 +135,15 @@ class MemoryManager:
             
         transcript = "\n".join(transcript_parts)
         
+        summarizer_prompt = load_prompt("generate_brief.md")
+
+        
         brief_messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are a context extractor. Look at the recent conversation transcript. "
-                    "Extract ONLY the user's active goals, constraints (like dates, timezone, preferences), "
-                    "and any key entities being discussed. output as a short 2-3 sentence context brief. no pleasantries."
-                )
+                "content": summarizer_prompt
             },
+
             {
                 "role": "user",
                 "content": f"Transcript:\n{transcript}"
@@ -222,18 +224,15 @@ class MemoryManager:
                 transcript_parts.append(f"{role}: {content}")
         transcript = "\n\n".join(transcript_parts)
 
+        summarizer_prompt = load_prompt("compress_history.md")
+
+
         summarizer_messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are an expert context compressor. You will be given a transcript of a conversation. "
-                    "Your job is to produce a dense, factual summary of the core facts, constraints, "
-                    "user preferences, and state of the conversation.\n"
-                    "Omit pleasantries. Retain specific dates, names, or actionable details.\n"
-                    "If the conversation includes previous compressed memory, integrate it into the new summary.\n"
-                    "Use bullet points under clear headings where helpful."
-                ),
+                "content": summarizer_prompt,
             },
+
             {
                 "role": "user",
                 "content": (

@@ -255,8 +255,16 @@ document.addEventListener('DOMContentLoaded', () => {
                                 }
                                 updateTyping(data.content);
                             } else if (data.type === 'debug_event' || data.type === 'debug_stream') {
-                                // Log trace events to console for now, prevents them being ignored or causing issues
+                                // Log trace events to console
                                 console.log(`[Trace: ${data.category}]`, data.content);
+                                
+                                // Update UI for scraping progress
+                                if (data.category === 'scraping') {
+                                    if (data.type === 'debug_event') {
+                                        updateTyping(data.content);
+                                    }
+                                }
+                                
                                 if (data.type === 'debug_stream') {
                                     // if it's subagent briefing, show it as subagent thought
                                     if (data.category === 'briefing') {

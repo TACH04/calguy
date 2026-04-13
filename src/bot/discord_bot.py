@@ -233,6 +233,13 @@ async def process_and_reply(message, content, is_mentioned):
                             await response_msg.edit(content=f"*({event['content']})*")
                         except Exception as e:
                             logger.warning(f"Failed to edit status: {e}")
+                elif event['type'] == 'debug_event':
+                    # Surface scraping/summarization progress to the user
+                    if not current_content and event.get('category') == 'scraping':
+                        try:
+                            await response_msg.edit(content=f"*({event['content']})*")
+                        except Exception as e:
+                            logger.warning(f"Failed to edit debug status: {e}")
                 elif event['type'] == 'tool_call':
                     logger.info(f"Agent requested tool call: {event['tool']} with args: {event['args']}")
                     tools_used.append(event['tool'])
