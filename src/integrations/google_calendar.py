@@ -50,20 +50,25 @@ def get_calendar_service():
 
     return build('calendar', 'v3', credentials=creds, static_discovery=False)
 
-def list_upcoming_events(max_results=20, time_min=None):
+def get_upcoming_events_data(max_results=20, time_min=None):
     """
-    Lists the upcoming events on the user's primary calendar.
+    Returns the raw list of upcoming events from Google Calendar.
     """
     service = get_calendar_service()
     
     if not time_min:
-        time_min = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+        time_min = datetime.datetime.utcnow().isoformat() + 'Z'
         
-    logger.info(f'Fetching the upcoming {max_results} events from Google Calendar.')
     events_result = service.events().list(calendarId=CALENDAR_ID, timeMin=time_min,
                                         maxResults=max_results, singleEvents=True,
                                         orderBy='startTime').execute()
-    events = events_result.get('items', [])
+    return events_result.get('items', [])
+
+def list_upcoming_events(max_results=20, time_min=None):
+    """
+    Lists the upcoming events on the user's primary calendar as a string.
+    """
+    events = get_upcoming_events_data(max_results, time_min)
 
     if not events:
         return 'No upcoming events found.'

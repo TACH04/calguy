@@ -8,6 +8,7 @@ from agents.research_agent import ResearchAgent
 from dotenv import load_dotenv
 from core.tool_registry import ToolRegistry
 from core.skill_loader import get_skill_content
+from bot.reminder_manager import reminder_manager
 
 logger = logging.getLogger('tools')
 
@@ -137,6 +138,61 @@ def verify_date_tool(date_string):
 def search_web_tool(query, max_results=5):
     return search_web(query, max_results)
 
+@registry.register(
+    name="rsvp_to_event",
+    description="RSVP a user to an event.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "event_id": {
+                "type": "string",
+                "description": "The ID of the event."
+            },
+            "user_id": {
+                "type": "integer",
+                "description": "The Discord numeric ID of the user RSVPing."
+            },
+            "status": {
+                "type": "string",
+                "enum": ["going", "maybe", "declined"],
+                "description": "The RSVP status."
+            }
+        },
+        "required": ["event_id", "user_id", "status"]
+    }
+)
+def rsvp_to_event_tool(event_id, user_id, status):
+    reminder_manager.add_subscription(event_id, user_id, status)
+    return f"Successfully RSVP'd user {user_id} as {status} for event {event_id}."
+
+@registry.register(
+    name="check_rsvp_status",
+    description="Check the RSVP status of a user for a specific event.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "event_id": {
+                "type": "string",
+                "description": "The ID of the event."
+            },
+            "user_id": {
+                "type": "integer",
+                "description": "The Discord numeric ID of the user."
+            }
+        },
+        "required": ["event_id", "user_id"]
+    }
+)
+def check_rsvp_status_tool(event_id, user_id):
+    subs = reminder_manager.get_all_subscribers(event_id)
+    if user_id in subs.get('going', []):
+        return "going"
+    elif user_id in subs.get('maybe', []):
+        return "maybe"
+    elif user_id in subs.get('declined', []):
+        return "declined"
+    else:
+        return "none"
 
 if ENABLE_DEEP_RESEARCH:
     @registry.register(

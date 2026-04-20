@@ -1,15 +1,19 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
 import json
 import time
 import asyncio
 import logging
+import datetime
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import aiohttp
+import hashlib
 from agents.agent import GeneralAgent
 from bot.text_chunking import DISCORD_MAX_MESSAGE_LENGTH, split_text
+from bot.reminder_manager import reminder_manager
+from integrations.google_calendar import get_upcoming_events_data
 
 # Configure logging
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -40,10 +44,48 @@ if not DISCORD_TOKEN or DISCORD_TOKEN == "your_bot_token_here":
     logger.error("DISCORD_TOKEN is not set in .env")
     exit(1)
 
+# Enforce a single instance of the bot per workspace
+LOCK_FILE = os.path.join(os.path.dirname(__file__), '..', '..', '.bot.lock')
+try:
+    if os.path.exists(LOCK_FILE):
+        # Check if the process is actually running (Mac/Linux specific)
+        with open(LOCK_FILE, 'r') as f:
+            old_pid = int(f.read().strip())
+        try:
+            os.kill(old_pid, 0)
+            logger.error(f"❌ Another bot instance is already running (PID: {old_pid}). Exiting.")
+            exit(1)
+        except (ProcessLookupError, ValueError):
+            # Process is dead, we can overwrite the lock
+            pass
+    
+    with open(LOCK_FILE, 'w') as f:
+        f.write(str(os.getpid()))
+    
+except Exception as e:
+    logger.warning(f"Could not enforce process lock: {e}")
+
+# Channel Configurations for Reminders
+def _parse_channel_id(val):
+    if not val:
+        return None
+    try:
+        # Handle cases where the user might paste a URL or 'guild_id/channel_id'
+        if '/' in val:
+            val = val.split('/')[-1]
+        return int(val)
+    except ValueError:
+        logger.error(f"Invalid channel ID format in .env: '{val}'")
+        return None
+
+ANNOUNCEMENT_CHANNEL_ID = _parse_channel_id(os.getenv("ANNOUNCEMENT_CHANNEL_ID"))
+REMINDERS_CHANNEL_ID = _parse_channel_id(os.getenv("REMINDERS_CHANNEL_ID"))
+
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+poll_lock = asyncio.Lock()
 
 # Session Management
 SESSION_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'sessions')
@@ -287,6 +329,159 @@ async def on_ready():
     
     logger.info('Bot is ready to receive commands!')
     logger.info('------')
+    
+    # Start the calendar polling task if channels are configured and not already running
+    if ANNOUNCEMENT_CHANNEL_ID:
+        if not poll_calendar.is_running():
+            poll_calendar.start()
+
+# Registry sync management
+sync_api_lock = asyncio.Lock()
+sync_registry_pending = False
+pending_dashboard_refreshes = {} # {channel_id: task}
+
+async def trigger_sync_registry():
+    global sync_registry_pending
+    if sync_api_lock.locked():
+        if not sync_registry_pending:
+            sync_registry_pending = True
+            logger.info("Sync already running, queuing pending sync.")
+        return
+    asyncio.create_task(_run_sync_with_pending())
+
+async def _run_sync_with_pending():
+    global sync_registry_pending
+    await sync_registry()
+    while sync_registry_pending:
+        sync_registry_pending = False
+        logger.info("Executing pending sync.")
+        await sync_registry()
+
+async def sync_registry():
+    """
+    Synchronizes the announcement channel dashboard and sends reminders.
+    This should generally be called via trigger_sync_registry() to handle debouncing.
+    """
+    async with sync_api_lock:
+        if not ANNOUNCEMENT_CHANNEL_ID:
+            return
+
+        announcement_channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+        reminders_channel = bot.get_channel(REMINDERS_CHANNEL_ID) if REMINDERS_CHANNEL_ID else None
+        
+        if not announcement_channel:
+            return
+
+        time_min = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        events = get_upcoming_events_data(max_results=50, time_min=time_min)
+        
+        if not events or isinstance(events, str):
+            events = []
+
+        dashboard_events = []
+        for event in events[:10]: # Limit to next 10 for dashboard
+            summary = event.get('summary', 'Untitled Event').strip()
+            
+            start_dt = None
+            if 'dateTime' in event['start']:
+                dt_str = event['start']['dateTime'].replace('Z', '+00:00')
+                start_dt = datetime.datetime.fromisoformat(dt_str)
+            else:
+                dt_str = event['start']['date']
+                start_dt = datetime.datetime.strptime(dt_str, '%Y-%m-%d').replace(tzinfo=datetime.timezone.utc)
+            
+            subs = reminder_manager.get_all_subscribers(event['id'])
+            going_count = len(subs.get('going', []))
+            
+            # format for dashboard
+            date_str = start_dt.strftime('%b %d')
+            time_str = start_dt.strftime('%I:%M %p')
+            
+            dashboard_events.append({
+                'date': date_str,
+                'time': time_str,
+                'title': summary,
+                'attendees': going_count
+            })
+            
+            # Reminder check
+            event_id = event['id']
+            if reminders_channel and not reminder_manager.is_reminder_sent(event_id):
+                if reminder_manager.is_in_progress(event_id):
+                    continue
+
+                now_dt = datetime.datetime.now(datetime.timezone.utc)
+                time_diff = start_dt - now_dt
+                if datetime.timedelta(minutes=-5) < time_diff < datetime.timedelta(minutes=60):
+                    going_subscribers = subs.get('going', [])
+                    if going_subscribers:
+                        mentions = " ".join([f"<@{uid}>" for uid in going_subscribers])
+                        reminder_text = (f"⏰ **Reminder!**\n"
+                                         f"**{summary}** is starting soon!\n"
+                                         f"{mentions}")
+                        reminder_manager.set_in_progress(event_id, True)
+                        try:
+                            await reminders_channel.send(reminder_text)
+                            reminder_manager.mark_reminder_sent(event_id)
+                            logger.info(f"Sent reminder for event: {summary} ({event_id}).")
+                        finally:
+                            reminder_manager.set_in_progress(event_id, False)
+                    else:
+                        reminder_manager.mark_reminder_sent(event_id)
+                        
+        # Render image
+        import tempfile
+        output_path = os.path.join(tempfile.gettempdir(), 'dashboard.png')
+        from bot.image_generator import render_event_dashboard
+        render_event_dashboard(dashboard_events, output_path)
+
+        # Message management: Try direct deletion of stored dashboard ID
+        # Fallback to history scan if the ID is missing or deletion fails.
+        deleted_old = False
+        if reminder_manager.dashboard_message_id:
+            try:
+                old_msg = await announcement_channel.fetch_message(reminder_manager.dashboard_message_id)
+                await old_msg.delete()
+                deleted_old = True
+                logger.info(f"Directly deleted old dashboard message {reminder_manager.dashboard_message_id}.")
+            except Exception:
+                # Silently fail and fallback to history scan
+                pass
+
+        if not deleted_old:
+            try:
+                async for msg in announcement_channel.history(limit=50):
+                    if msg.author == bot.user:
+                        # Check if it has the dashboard attachment
+                        if any(a.filename == 'dashboard.png' for a in msg.attachments):
+                            try:
+                                await msg.delete()
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.error(f"Error cleaning up old dashboard messages via history: {e}")
+ 
+        # Post the new dashboard at the bottom
+        with open(output_path, 'rb') as f:
+            discord_file = discord.File(f, filename='dashboard.png')
+            new_dashboard_msg = await announcement_channel.send(file=discord_file)
+            reminder_manager.dashboard_message_id = new_dashboard_msg.id
+            reminder_manager.save()
+
+@tasks.loop(minutes=5)
+async def poll_calendar():
+    """Poll Google Calendar for new events and upcoming reminders."""
+    if poll_lock.locked():
+        logger.warning("poll_calendar is already running, skipping this iteration.")
+        return
+
+    async with poll_lock:
+        try:
+            await sync_registry()
+        except Exception as e:
+            logger.error(f"Error in poll_calendar loop: {e}")
+
+# Reactions are no longer supported.
 
 @bot.command(name='help')
 async def help_cmd(ctx):
@@ -373,7 +568,24 @@ async def on_message(message):
     # Check if the bot is mentioned or if it's a DM
     is_dm = isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user in message.mentions
-    
+    is_announcement_channel = message.channel.id == ANNOUNCEMENT_CHANNEL_ID
+
+    # Handle 30-second debounced dashboard refresh for the announcement channel
+    if is_announcement_channel and not message.author.bot:
+        if message.channel.id in pending_dashboard_refreshes:
+            pending_dashboard_refreshes[message.channel.id].cancel()
+        
+        async def debounced_sync():
+            await asyncio.sleep(30)
+            try:
+                await trigger_sync_registry()
+            finally:
+                if pending_dashboard_refreshes.get(message.channel.id) == refresh_task:
+                    del pending_dashboard_refreshes[message.channel.id]
+
+        refresh_task = asyncio.create_task(debounced_sync())
+        pending_dashboard_refreshes[message.channel.id] = refresh_task
+
     # Diagnostic logging for server interaction
     if not is_dm and is_mentioned:
         logger.info(f"Mentioned in channel {message.channel.id} of guild {message.guild.id}. Attachments: {len(message.attachments)}")
@@ -422,7 +634,7 @@ async def on_message(message):
             del session_manager.tasks[message.channel.id]
 
 async def process_and_reply(message, content, is_mentioned, images: list = None):
-    sender_name = message.author.display_name
+    sender_name = f"{message.author.display_name} (ID: {message.author.id})"
     server_name = message.guild.name if message.guild else "DM"
     channel_name = message.channel.name if hasattr(message.channel, 'name') else "DM"
     
@@ -507,6 +719,10 @@ async def process_and_reply(message, content, is_mentioned, images: list = None)
                     await sync_active_edit()
                 elif event['type'] == 'tool_result':
                     logger.debug(f"Tool {event['tool']} returned: {event['result']}")
+                    if event['tool'] in ['create_event', 'delete_event', 'rsvp_to_event']:
+                        # Trigger an immediate registry sync via the debounced wrapper
+                        await trigger_sync_registry()
+                    
                     if event['tool'] == 'create_event':
                         import re
                         # Look for the URL pattern in the create_event result
