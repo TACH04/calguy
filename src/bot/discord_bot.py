@@ -438,13 +438,16 @@ async def _resolve_and_repair_uid(raw_input, contacts, announcement_channel, eve
     
     # 1. Exact match in contacts
     if uid_str in contacts:
-        return uid_str, contacts[uid_str]
+        contact_data = contacts[uid_str]
+        name = contact_data.get('name') if isinstance(contact_data, dict) else contact_data
+        return uid_str, name
         
     # 2. Precision repair
     try:
         uid_float = float(uid_str)
-        for contact_id, name in contacts.items():
+        for contact_id, contact_data in contacts.items():
             if int(float(contact_id)) == int(uid_float):
+                name = contact_data.get('name') if isinstance(contact_data, dict) else contact_data
                 logger.warning(f"Precision repair: replacing malformed ID {raw_input} with {contact_id}")
                 reminder_manager.remove_subscription(event_id, raw_input, status_group)
                 reminder_manager.add_subscription(event_id, contact_id, status_group)
@@ -553,10 +556,16 @@ async def sync_registry(force: bool = False):
                     logger.info(f"RSVP from unknown ID (please add to data/contacts.json): {final_uid}")
                     initials = "?"
                 
+                # Get custom color from contacts if available
+                user_data = contacts.get(final_uid)
+                custom_color = None
+                if isinstance(user_data, dict):
+                    custom_color = user_data.get('color')
+                
                 attendees_data.append({
                     "id": str(final_uid),
                     "initials": initials,
-                    "color": generate_color(final_uid)
+                    "color": custom_color or generate_color(final_uid)
                 })
 
             dashboard_events.append({
@@ -677,11 +686,60 @@ async def poll_calendar():
 
 # Reactions are no longer supported.
 
+@bot.command(name='color')
+async def color_cmd(ctx, hex_code: str = None):
+    """Sets your custom color for the schedule image (e.g. !color #FF5733)."""
+    user_id = str(ctx.author.id)
+    contacts = load_contacts()
+    
+    if not hex_code:
+        # Show current color
+        user_data = contacts.get(user_id)
+        current_color = None
+        if isinstance(user_data, dict):
+            current_color = user_data.get('color')
+        
+        if current_color:
+            await ctx.send(f"🎨 Your current custom color is `{current_color}`. Use `!color <hex>` to change it.")
+        else:
+            # Show the generated default
+            default = generate_color(user_id)
+            await ctx.send(f"🎨 You haven't set a custom color yet. Your current default is `{default}`. Use `!color <hex>` to set a custom one.")
+        return
+
+    # Validate hex code
+    if not re.match(r'^#(?:[0-9a-fA-F]{3}){1,2}$', hex_code):
+        await ctx.send("❌ Invalid hex code format. Please use something like `#FF5733` or `#ABC`.")
+        return
+
+    # Normalize hex
+    hex_code = hex_code.upper()
+    if len(hex_code) == 4: # Handle #ABC -> #AABBCC
+        hex_code = "#" + "".join([c*2 for c in hex_code[1:]])
+
+    # Update or create entry
+    if user_id in contacts:
+        if not isinstance(contacts[user_id], dict):
+            contacts[user_id] = {"name": contacts[user_id], "color": hex_code}
+        else:
+            contacts[user_id]["color"] = hex_code
+    else:
+        # Fallback if they aren't in contacts yet
+        contacts[user_id] = {"name": ctx.author.display_name, "color": hex_code}
+
+    if save_contacts(contacts):
+        await ctx.send(f"✅ Your custom color has been set to `{hex_code}`! Refreshing the dashboard...")
+        # Trigger dashboard refresh
+        await trigger_sync_registry(force=True)
+    else:
+        await ctx.send("❌ Failed to save your color settings.")
+
 @bot.command(name='help')
 async def help_cmd(ctx):
     """Displays this help message."""
     help_text = """**Brolympus Bot Commands:**
 `!sync_names` - Automatically populate data/contacts.json with server members.
+`!color <hex>` - Set your custom color for the schedule image (e.g. #FF5733).
 `!clear` - Reset my conversation context immediately.
 `!rebase <new prompt>` - Reset conversation context and completely replace my system prompt.
 `!stop` - Interrupt the current active task.
