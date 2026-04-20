@@ -4,36 +4,61 @@ import datetime
 
 # Fallback to default if Arial is not found (which it should be on macOS)
 # Prefer Avenir for a premium look, fallback to Helvetica or Arial
-FONT_PATH = next((p for p in [
-    "/System/Library/Fonts/Avenir.ttc",
-    "/System/Library/Fonts/Helvetica.ttc", 
-    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf"
-] if os.path.exists(p)), "/System/Library/Fonts/Supplemental/Arial.ttf")
+# Font path priorities for Regular and Bold variants
+REGULAR_FONT_PRIORITIES = [
+    ("/System/Library/Fonts/Avenir.ttc", 0), # Avenir Book
+    ("/System/Library/Fonts/Helvetica.ttc", 0),
+    ("/System/Library/Fonts/Supplemental/Arial.ttf", 0),
+]
+
+BOLD_FONT_PRIORITIES = [
+    ("/System/Library/Fonts/Avenir.ttc", 4), # Avenir Heavy
+    ("/System/Library/Fonts/Helvetica.ttc", 2), # Helvetica Bold usually index 2 in TTC
+    ("/System/Library/Fonts/Supplemental/Arial Bold.ttf", 0),
+    ("/System/Library/Fonts/Avenir.ttc", 8), # Fallback to Medium if Heavy fails (unlikely)
+]
+
+def get_font(size, is_bold=False):
+    """
+    Safely loads a prioritized font from the system with fallback to default.
+    """
+    priorities = BOLD_FONT_PRIORITIES if is_bold else REGULAR_FONT_PRIORITIES
+    
+    for path, index in priorities:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size, index=index)
+            except (IOError, Exception):
+                continue
+    
+    # Final reliable fallback
+    try:
+        # PIL >= 9.2.0 supports size in load_default
+        return ImageFont.load_default(size=size)
+    except (TypeError, AttributeError):
+        return ImageFont.load_default()
 
 def render_event_dashboard(events, output_path):
     """
     Renders a high-fidelity image dashboard of upcoming events.
     events: list of dicts with 'schedule', 'title', 'attendees' (int), 'attendees_data' (list)
     """
-    width = 850
+    width = 1000
     base_row_height = 60
     header_height = 100
     padding = 30
-    line_spacing = 35
+    line_spacing = 55 # Increased for bigger bubbles
+    bubble_radius = 22
+    bubble_diameter = bubble_radius * 2
     
     # Pre-load fonts for measurement
-    try:
-        font_title = ImageFont.truetype(FONT_PATH, 36)
-        font_header = ImageFont.truetype(FONT_PATH, 20)
-        font_main = ImageFont.truetype(FONT_PATH, 24)
-    except IOError:
-        font_title = ImageFont.load_default(size=36) if hasattr(ImageFont, 'load_default') else ImageFont.load_default()
-        font_header = ImageFont.load_default(size=20) if hasattr(ImageFont, 'load_default') else ImageFont.load_default()
-        font_main = ImageFont.load_default(size=24) if hasattr(ImageFont, 'load_default') else ImageFont.load_default()
+    font_title = get_font(36, is_bold=False)
+    font_header = get_font(20, is_bold=False)
+    font_main = get_font(24, is_bold=False)
+    font_bubble = get_font(18, is_bold=True)
 
     # Column constraints
-    cols = [padding, padding + 220, width - 340]
+    cols = [padding, padding + 220, width - 420]
     
     # Calculate heights and layouts for each event
     # We use a dummy draw object for measurements
@@ -62,32 +87,29 @@ def render_event_dashboard(events, output_path):
                 start_x = cols[2] + 120
                 current_x = start_x
                 current_row = []
-                row_y_offset = 0
+                row_y_offset = (base_row_height - bubble_diameter) // 2 - 5 # Center vertically in row
                 
                 for person in attendees_data:
-                    initials = person.get('initials', '?')
-                    ibbox = draw_measure.textbbox((0, 0), initials, font=font_main)
-                    iw = ibbox[2] - ibbox[0]
-                    
-                    if current_x + iw > width - padding:
+                    # For bubble calculation, use diameter plus gap
+                    if current_x + bubble_diameter > width - padding:
                         # Wrap to next line
                         layout['rows'].append(current_row)
                         current_row = []
-                        current_x = start_x # Keep consistent indentation
+                        current_x = start_x 
                         row_y_offset += line_spacing
                         
                     current_row.append({
-                        'initials': initials,
+                        'initials': person.get('initials', '?'),
                         'color': person.get('color', '#ffffff'),
                         'x': current_x,
                         'y_offset': row_y_offset
                     })
-                    current_x += iw + 12
+                    current_x += bubble_diameter + 10 # Spacing between bubbles
                 
                 if current_row:
                     layout['rows'].append(current_row)
                 
-                layout['height'] = max(base_row_height, row_y_offset + line_spacing + 10)
+                layout['height'] = max(base_row_height, row_y_offset + bubble_diameter + 15)
             
             event_layouts.append(layout)
             total_events_height += layout['height']
@@ -134,15 +156,28 @@ def render_event_dashboard(events, output_path):
             att_color = "#4CAF50" if ev['attendees'] > 0 else "#888888"
             draw.text((cols[2], y), layout['base_text'], font=font_main, fill=att_color)
             
-            # Draw all wrapped initials
+            # Draw all wrapped bubbles
             for row in layout['rows']:
                 for item in row:
-                    draw.text((item['x'], y + item['y_offset']), item['initials'], font=font_main, fill=item['color'])
+                    bx, by = item['x'], y + item['y_offset']
+                    # Draw border circle
+                    draw.ellipse([bx, by, bx + bubble_diameter, by + bubble_diameter], outline=item['color'], width=2)
+                    
+                    # Center initials inside
+                    initials = item['initials']
+                    ibbox = draw.textbbox((0, 0), initials, font=font_bubble)
+                    iw = ibbox[2] - ibbox[0]
+                    ih = ibbox[3] - ibbox[1]
+                    
+                    text_x = bx + (bubble_diameter - iw) // 2
+                    text_y = by + (bubble_diameter - ih) // 2 - 2 # Minor visual adjustment
+                    draw.text((text_x, text_y), initials, font=font_bubble, fill=item['color'])
             
             y += layout['height']
             # Subtle row separator
             draw.line([(padding, y - 5), (width - padding, y - 5)], fill="#333333", width=1)
             
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if os.path.dirname(output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
     img.save(output_path)
     return output_path
